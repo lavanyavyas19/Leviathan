@@ -23,3 +23,11 @@
 ::-webkit-scrollbar-corner {
   display: none;
 }
+html, body {
+  min-height: 100%;
+  height: auto;
+  overflow-y: auto; /* ✅ allow scrolling */
+}
+html {
+  scroll-behavior: smooth;
+}

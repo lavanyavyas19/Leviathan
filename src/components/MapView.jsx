@@ -202,13 +202,19 @@ const MapView = ({ highlightedVesselId, onVesselClick }) => {
               <stop offset="50%" stopColor="rgba(0, 255, 255, 0.3)" />
               <stop offset="100%" stopColor="rgba(0, 255, 255, 0)" />
             </linearGradient>
-
-            {/* Vessel shape pattern */}
             <g id="vesselShape">
-              <polygon points="-12,-4 12,0 -12,4 -8,0" fill="currentColor" stroke="rgba(255,255,255,0.8)" strokeWidth="1"/>
-              <circle cx="8" cy="0" r="2" fill="rgba(255,255,255,0.9)"/>
-            </g>
-          </defs>
+  {/* Hull */}
+  <rect x="-10" y="-4" width="20" height="8" rx="2" ry="2"
+        fill="currentColor" stroke="white" strokeWidth="0.8"/>
+
+  {/* Bow */}
+  <polygon points="10,-4 10,4 18,0"
+           fill="currentColor" stroke="white" strokeWidth="0.8"/>
+
+  {/* Bridge */}
+  <rect x="-4" y="-3" width="4" height="6" fill="white" />
+</g>
+</defs>
 
           {/* Ocean background */}
           <rect width="800" height="600" fill="url(#oceanGradient)" />
@@ -297,6 +303,7 @@ const MapView = ({ highlightedVesselId, onVesselClick }) => {
                 key={vessel.id} 
                 transform={`translate(${vessel.x}, ${vessel.y}) rotate(${vessel.heading})`}
                 style={{ cursor: 'pointer' }}
+                className={highlightedVesselId === vessel.id ? "scale-125 drop-shadow-[0_0_20px_rgba(0,255,255,1)]" : ""}
                 onClick={() => handleVesselClick(vessel)}
                 onMouseEnter={() => setHoveredVessel(vessel)}
                 onMouseLeave={() => setHoveredVessel(null)}

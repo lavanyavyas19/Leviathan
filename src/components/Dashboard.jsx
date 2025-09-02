@@ -3,87 +3,142 @@ import Sidebar from './Sidebar';
 import MapView from './MapView';
 import RightPanel from './RightPanel';
 import BottomChart from './BottomChart';
+import VesselLogs from './VesselLogs';
 
 const Dashboard = ({ onLogout }) => {
   const [activeView, setActiveView] = useState('dashboard');
-  const [highlightedVesselId, setHighlightedVesselId] = useState(null);
-
-  const handleAlertClick = (vesselId) => {
-    setHighlightedVesselId(vesselId);
-    // Auto-clear highlight after 5 seconds
-    setTimeout(() => setHighlightedVesselId(null), 5000);
-  };
-
-  const handleVesselClick = (vessel) => {
-    console.log('Vessel clicked:', vessel);
-    // Future: Open vessel details modal
-  };
+  const [isPanelOpen, setIsPanelOpen] = useState(true);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-blue-900 text-white overflow-hidden">
-      {/* Enhanced Header */}
-      <header className="bg-slate-800/50 backdrop-blur-lg border-b border-cyan-500/20 p-4">
-        <div className="flex items-center justify-between">
+    <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-blue-900 text-white min-h-screen flex flex-col">
+      
+      {/* ===== Header ===== */}
+      <header className="bg-slate-800/50 backdrop-blur-lg border-b border-cyan-500/20 p-4 sticky top-0 z-50">
+        <div className="flex justify-between items-center">
+          <h1 className="text-xl font-bold bg-gradient-to-r from-cyan-400 to-teal-400 bg-clip-text text-transparent">
+            LEVIATHAN
+          </h1>
           <div className="flex items-center space-x-4">
-            <div className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-gradient-to-br from-cyan-400 to-teal-600 rounded-lg flex items-center justify-center">
-                <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M12 2L2 7v10c0 5.55 3.84 9.74 9 9.74s9-4.19 9-9.74V7L12 2z"/>
+            {/* Toggle Right Panel (only in dashboard view) */}
+            {activeView === 'dashboard' && (
+              <button
+                onClick={() => setIsPanelOpen(!isPanelOpen)}
+                className="px-4 py-2 flex items-center space-x-2 
+                           bg-slate-800/40 hover:bg-slate-700/60 
+                           border border-cyan-500/30 rounded-lg 
+                           text-cyan-400 transition-all duration-300 
+                           shadow-md hover:shadow-cyan-500/30"
+              >
+                <svg
+                  className={`w-5 h-5 transition-transform duration-300 ${
+                    isPanelOpen ? "rotate-180 text-cyan-300" : "rotate-0 text-cyan-400"
+                  }`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
-              </div>
-              <div>
-                <h1 className="text-xl font-bold bg-gradient-to-r from-cyan-400 to-teal-400 bg-clip-text text-transparent">
-                  LEVIATHAN
-                </h1>
-                <div className="text-xs text-gray-400">Maritime Surveillance Command Center</div>
-              </div>
-            </div>
-          </div>
+                <span className="text-sm font-medium tracking-wide">
+                  {isPanelOpen ? "Hide Panel" : "Show Panel"}
+                </span>
+                {isPanelOpen && (
+                  <span className="ml-2 w-2 h-2 bg-cyan-400 rounded-full animate-pulse"></span>
+                )}
+              </button>
+            )}
 
-          <div className="flex items-center space-x-6">
-            <div className="flex items-center space-x-4 text-sm">
-              <div className="flex items-center space-x-2">
-                <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-                <span className="text-gray-300">SYSTEM ONLINE</span>
-              </div>
-              <div className="text-gray-400">|</div>
-              <div className="flex items-center space-x-2">
-                <svg className="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <span className="text-gray-300">{new Date().toLocaleTimeString()}</span>
-              </div>
-            </div>
+            {/* Logout */}
             <button
               onClick={onLogout}
-              className="flex items-center space-x-2 px-4 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg transition-all duration-200 border border-red-500/20"
+              className="px-4 py-2 bg-red-600/20 hover:bg-red-600/30 
+                         text-red-400 rounded-lg border border-red-500/20"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-              </svg>
-              <span>Logout</span>
+              Logout
             </button>
           </div>
         </div>
       </header>
 
-      {/* Main content */}
-      <div className="flex h-[calc(100vh-80px)]">
-        <Sidebar activeView={activeView} setActiveView={setActiveView} />
+      {/* ===== Main Content ===== */}
+      <div className="flex flex-1 overflow-y-auto">
         
-        <div className="flex-1 flex flex-col">
-          {/* Main map area */}
-          <div className="flex-1 flex">
-            <MapView 
-              highlightedVesselId={highlightedVesselId}
-              onVesselClick={handleVesselClick}
-            />
-            <RightPanel onAlertClick={handleAlertClick} />
-          </div>
+        {/* Sidebar */}
+        <Sidebar activeView={activeView} setActiveView={setActiveView} />
+
+        {/* ===== Page Content Area ===== */}
+        <main className="flex-1 flex flex-col p-6 gap-6">
           
-          {/* Bottom chart */}
-          <BottomChart />
-        </div>
+          {/* === Dashboard View === */}
+          {activeView === 'dashboard' && (
+            <>
+              <div className="flex flex-1 relative gap-6">
+                {/* Map View */}
+                <div className="flex-1 transition-all duration-300">
+                  <MapView />
+                </div>
+
+                {/* Right Panel */}
+                {isPanelOpen && (
+                  <div className="w-[350px] transition-all duration-300 flex-shrink-0">
+                    <RightPanel />
+                  </div>
+                )}
+              </div>
+
+              
+            </>
+          )}
+
+          {/* === Anomaly Reports View === */}
+          {activeView === 'anomaly-reports' && (
+            <div className="flex-1 bg-slate-800/40 rounded-xl border border-cyan-500/30 p-4 shadow-lg shadow-cyan-500/10">
+              <h2 className="text-lg font-semibold text-cyan-400 mb-4">Anomaly Detection Trends</h2>
+              <BottomChart />
+            </div>
+          )}
+
+          {/* === Vessel Logs === */}
+          {activeView === 'vessel-logs' && (
+            <div className="flex-1 flex items-center justify-center text-gray-400">
+              Vessel Logs view coming soon...
+            </div>
+          )}
+
+          {/* === Heatmaps === */}
+          {activeView === 'heatmaps' && (
+            <div className="flex-1 flex items-center justify-center text-gray-400">
+              Heatmaps view coming soon...
+            </div>
+          )}
+
+          {/* === Playback === */}
+          {activeView === 'playback' && (
+            <div className="flex-1 flex items-center justify-center text-gray-400">
+              Playback view coming soon...
+            </div>
+          )}
+
+          {/* === Reports/Export === */}
+          {activeView === 'reports-export' && (
+            <div className="flex-1 flex items-center justify-center text-gray-400">
+              Reports & Export view coming soon...
+            </div>
+          )}
+
+          {/* === Settings === */}
+          {activeView === 'settings' && (
+            <div className="flex-1 flex items-center justify-center text-gray-400">
+              Settings view coming soon...
+            </div>
+          )}
+
+          {/* Vessel Logs */}
+          {activeView === 'vessel-logs' && (
+            <VesselLogs onVesselSelect={(id) => setHighlightedVesselId(id)} />
+          )}
+          
+        </main>
       </div>
     </div>
   );

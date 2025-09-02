@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { TrendingUp, TrendingDown, Minus } from "lucide-react";  // ✅ Correct import
 
 const RightPanel = ({ onAlertClick }) => {
+  const [collapsed, setCollapsed] = useState(false);
+
   const [stats, setStats] = useState({
     vesselsTracked: 1247,
     anomaliesDetected: 23,
@@ -19,65 +22,20 @@ const RightPanel = ({ onAlertClick }) => {
   });
 
   const [alerts, setAlerts] = useState([
-    { 
-      id: 1, 
-      type: 'spoofing', 
-      vessel: 'MV-ATLANTIC-STAR', 
-      vesselId: 5,
-      timestamp: new Date(Date.now() - 300000), 
-      severity: 'high',
-      acknowledged: false,
-      description: 'GPS signal inconsistency detected'
-    },
-    { 
-      id: 2, 
-      type: 'loitering', 
-      vessel: 'GULF-RUNNER-07', 
-      vesselId: 8,
-      timestamp: new Date(Date.now() - 600000), 
-      severity: 'medium',
-      acknowledged: false,
-      description: 'Vessel stationary for 45 minutes'
-    },
-    { 
-      id: 3, 
-      type: 'speed', 
-      vessel: 'OCEAN-BREEZE-12', 
-      vesselId: 12,
-      timestamp: new Date(Date.now() - 900000), 
-      severity: 'low',
-      acknowledged: true,
-      description: 'Excessive speed in restricted zone'
-    },
-    { 
-      id: 4, 
-      type: 'deviation', 
-      vessel: 'SEA-HAWK-03', 
-      vesselId: 3,
-      timestamp: new Date(Date.now() - 1200000), 
-      severity: 'medium',
-      acknowledged: false,
-      description: 'Route deviation from filed plan'
-    },
-    { 
-      id: 5, 
-      type: 'spoofing', 
-      vessel: 'TIDE-MASTER-21', 
-      vesselId: 14,
-      timestamp: new Date(Date.now() - 1500000), 
-      severity: 'high',
-      acknowledged: true,
-      description: 'AIS transponder anomaly detected'
-    },
+    { id: 1, type: 'spoofing', vessel: 'MV-ATLANTIC-STAR', vesselId: 5, timestamp: new Date(Date.now() - 300000), severity: 'high', acknowledged: false, description: 'GPS signal inconsistency detected' },
+    { id: 2, type: 'loitering', vessel: 'GULF-RUNNER-07', vesselId: 8, timestamp: new Date(Date.now() - 600000), severity: 'medium', acknowledged: false, description: 'Vessel stationary for 45 minutes' },
+    { id: 3, type: 'speed', vessel: 'OCEAN-BREEZE-12', vesselId: 12, timestamp: new Date(Date.now() - 900000), severity: 'low', acknowledged: false, description: 'Excessive speed in restricted zone' },
+    { id: 4, type: 'deviation', vessel: 'SEA-HAWK-03', vesselId: 3, timestamp: new Date(Date.now() - 1200000), severity: 'medium', acknowledged: false, description: 'Route deviation from filed plan' },
+    { id: 5, type: 'spoofing', vessel: 'TIDE-MASTER-21', vesselId: 14, timestamp: new Date(Date.now() - 1500000), severity: 'high', acknowledged: false, description: 'AIS transponder anomaly detected' },
   ]);
 
-  // Update stats periodically
+  // Periodic stats update
   useEffect(() => {
     const interval = setInterval(() => {
       setStats(prev => {
         const vesselChange = Math.floor(Math.random() * 3 - 1);
         const anomalyChange = Math.floor(Math.random() * 2 - 0.5);
-        
+
         return {
           ...prev,
           vesselsTracked: Math.max(1200, prev.vesselsTracked + vesselChange),
@@ -95,31 +53,17 @@ const RightPanel = ({ onAlertClick }) => {
     return () => clearInterval(interval);
   }, []);
 
-  const getSeverityColor = (severity) => {
-    switch (severity) {
-      case 'high': return 'text-red-400 bg-red-500/20 border-red-500/30';
-      case 'medium': return 'text-orange-400 bg-orange-500/20 border-orange-500/30';
-      case 'low': return 'text-yellow-400 bg-yellow-500/20 border-yellow-500/30';
-      default: return 'text-gray-400 bg-gray-500/20 border-gray-500/30';
-    }
-  };
-
-  const getAlertIcon = (type) => {
-    switch (type) {
-      case 'spoofing': return '⛔';
-      case 'loitering': return '🌀';
-      case 'speed': return '⚡';
-      case 'deviation': return '↔️';
-      default: return '⚠️';
-    }
-  };
-
+  // === helpers ===
   const getTrendIcon = (trend) => {
     switch (trend) {
-      case 'up': return <span className="text-green-400 text-sm">↗️</span>;
-      case 'down': return <span className="text-red-400 text-sm">↘️</span>;
-      case 'stable': return <span className="text-gray-400 text-sm">→</span>;
-      default: return null;
+      case 'up':
+        return <TrendingUp className="w-4 h-4 text-green-400" />;
+      case 'down':
+        return <TrendingDown className="w-4 h-4 text-red-400" />;
+      case 'stable':
+        return <Minus className="w-4 h-4 text-gray-400" />;
+      default:
+        return null;
     }
   };
 
@@ -136,7 +80,7 @@ const RightPanel = ({ onAlertClick }) => {
 
   const handleAcknowledge = (alertId, e) => {
     e.stopPropagation();
-    setAlerts(prev => prev.map(alert => 
+    setAlerts(prev => prev.map(alert =>
       alert.id === alertId ? { ...alert, acknowledged: true } : alert
     ));
   };
@@ -148,162 +92,118 @@ const RightPanel = ({ onAlertClick }) => {
 
   const healthInfo = getHealthSeverity(stats.systemHealth);
 
+  // === UI ===
   return (
-    <div className="w-80 p-6 space-y-6">
-      {/* Enhanced System Stats */}
-      <div className="bg-slate-800/30 backdrop-blur-sm rounded-xl border border-cyan-500/30 p-4">
-        <h3 className="text-lg font-semibold text-cyan-400 mb-4 flex items-center">
-          <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-          </svg>
-          System Status
-        </h3>
+    <div className={`transition-all duration-500 ease-in-out ${collapsed ? "w-10" : "w-80"} bg-slate-900/50 border-l border-cyan-500/20 flex flex-col relative`}>
+      {/* Collapse toggle */}
+      <button
+        onClick={() => setCollapsed(!collapsed)}
+        className="absolute -left-6 top-4 bg-slate-800/60 hover:bg-slate-700/80 
+                   border border-cyan-500/30 text-cyan-400 px-2 py-1 rounded-r-lg text-xs"
+      >
+        {collapsed ? "›" : "‹"}
+      </button>
 
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <span className="text-gray-300">Vessels Tracked</span>
-            <div className="flex items-center space-x-2">
-              <span className="text-xl font-mono text-cyan-400">{stats.vesselsTracked.toLocaleString()}</span>
-              {getTrendIcon(stats.trends.vessels)}
-              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <span className="text-gray-300">Total Anomalies</span>
-            <div className="flex items-center space-x-2">
-              <span className="text-xl font-mono text-orange-400">{stats.anomaliesDetected}</span>
-              {getTrendIcon(stats.trends.anomalies)}
-              <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></div>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <span className="text-gray-300">System Health</span>
-            <div className="flex items-center space-x-2">
-              <span className={`text-xl font-mono ${healthInfo.color}`}>{stats.systemHealth.toFixed(1)}%</span>
-              <div className="w-16 h-2 bg-slate-700 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-gradient-to-r from-green-500 to-cyan-500 transition-all duration-1000"
-                  style={{ width: `${stats.systemHealth}%` }}
-                ></div>
-              </div>
-            </div>
-          </div>
-
-          <div className="pt-2 border-t border-slate-600/30">
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-gray-400">Status: <span className={healthInfo.color}>{healthInfo.level}</span></span>
-              <span className="text-gray-400">Last Update: {stats.lastUpdate.toLocaleTimeString()}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Anomaly Breakdown */}
-      <div className="bg-slate-800/30 backdrop-blur-sm rounded-xl border border-cyan-500/30 p-4">
-        <h3 className="text-lg font-semibold text-cyan-400 mb-4">Anomaly Breakdown</h3>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="text-center p-2 bg-red-500/10 border border-red-500/30 rounded-lg">
-            <div className="text-red-400 text-xl font-mono">{stats.anomalyBreakdown.spoofing}</div>
-            <div className="text-xs text-gray-400">⛔ Spoofing</div>
-          </div>
-          <div className="text-center p-2 bg-orange-500/10 border border-orange-500/30 rounded-lg">
-            <div className="text-orange-400 text-xl font-mono">{stats.anomalyBreakdown.loitering}</div>
-            <div className="text-xs text-gray-400">🌀 Loitering</div>
-          </div>
-          <div className="text-center p-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
-            <div className="text-yellow-400 text-xl font-mono">{stats.anomalyBreakdown.speed}</div>
-            <div className="text-xs text-gray-400">⚡ Speed</div>
-          </div>
-          <div className="text-center p-2 bg-blue-500/10 border border-blue-500/30 rounded-lg">
-            <div className="text-blue-400 text-xl font-mono">{stats.anomalyBreakdown.deviation}</div>
-            <div className="text-xs text-gray-400">↔️ Deviation</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Live Alerts Feed */}
-      <div className="bg-slate-800/30 backdrop-blur-sm rounded-xl border border-cyan-500/30 p-4 flex-1">
-        <h3 className="text-lg font-semibold text-cyan-400 mb-4 flex items-center">
-          <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
-          Live Alerts
-        </h3>
-
-        <div className="space-y-3 max-h-96 overflow-y-auto">
-          {alerts.map((alert) => (
-            <div 
-              key={alert.id} 
-              className={`p-3 rounded-lg border cursor-pointer transition-all hover:scale-[1.02] ${getSeverityColor(alert.severity)} ${
-                alert.acknowledged ? 'opacity-60' : ''
-              }`}
-              onClick={() => handleAlertClick(alert)}
-            >
-              <div className="flex items-start justify-between mb-2">
+      {!collapsed && (
+        <div className="p-6 space-y-6 overflow-y-auto">
+          {/* === System Status === */}
+          <div className="bg-slate-800/30 rounded-xl border border-cyan-500/30 p-4">
+            <h3 className="text-lg font-semibold text-cyan-400 mb-4">System Status</h3>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-gray-300">Vessels Tracked</span>
                 <div className="flex items-center space-x-2">
-                  <span className="text-lg">{getAlertIcon(alert.type)}</span>
-                  <div>
-                    <div className="font-semibold text-sm">{alert.vessel}</div>
-                    <div className="text-xs opacity-80 capitalize">{alert.type} Alert</div>
+                  <span className="text-xl font-mono text-cyan-400">{stats.vesselsTracked.toLocaleString()}</span>
+                  {getTrendIcon(stats.trends.vessels)}
+                </div>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-300">Total Anomalies</span>
+                <div className="flex items-center space-x-2">
+                  <span className="text-xl font-mono text-orange-400">{stats.anomaliesDetected}</span>
+                  {getTrendIcon(stats.trends.anomalies)}
+                </div>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-300">System Health</span>
+                <div className="flex items-center space-x-2">
+                  <span className={`text-xl font-mono ${healthInfo.color}`}>{stats.systemHealth.toFixed(1)}%</span>
+                  <div className="w-16 h-2 bg-slate-700 rounded-full overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-green-500 to-cyan-500 transition-all duration-1000" style={{ width: `${stats.systemHealth}%` }}></div>
                   </div>
                 </div>
-                <div className="text-xs opacity-70">
-                  {alert.timestamp.toLocaleTimeString()}
-                </div>
               </div>
-              
-              <div className="text-xs opacity-80 mb-2">
-                {alert.description}
-              </div>
-
-              <div className="flex items-center space-x-2">
-                {!alert.acknowledged && (
-                  <button
-                    onClick={(e) => handleAcknowledge(alert.id, e)}
-                    className="px-2 py-1 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-400 rounded text-xs transition-all border border-cyan-500/30"
-                  >
-                    ✓ ACK
-                  </button>
-                )}
-                <button
-                  onClick={(e) => handleDismiss(alert.id, e)}
-                  className="px-2 py-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded text-xs transition-all border border-red-500/30"
-                >
-                  ✕ Dismiss
-                </button>
-                <span className={`px-2 py-1 text-xs rounded border ${getSeverityColor(alert.severity)}`}>
-                  {alert.severity.toUpperCase()}
-                </span>
+              <div className="pt-2 border-t border-slate-600/30 text-xs text-gray-400">
+                Status: <span className={healthInfo.color}>{healthInfo.level}</span> | Last Update: {stats.lastUpdate.toLocaleTimeString()}
               </div>
             </div>
-          ))}
-        </div>
+          </div>
 
-        <button className="w-full mt-4 py-2 px-4 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-400 rounded-lg transition-all duration-200 border border-cyan-500/30 text-sm">
-          View All Alerts ({alerts.length})
-        </button>
-      </div>
+          {/* === Anomaly Breakdown === */}
+          <div className="bg-slate-800/30 backdrop-blur-sm rounded-xl border border-cyan-500/30 p-4">
+            <h3 className="text-lg font-semibold text-cyan-400 mb-4">Anomaly Breakdown</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="text-center p-3 rounded-lg bg-gradient-to-br from-red-500 to-red-700 border border-red-400/50">
+                <div className="text-red-200 text-xl font-bold">{stats.anomalyBreakdown.spoofing}</div>
+                <div className="text-xs text-gray-300">Spoofing</div>
+              </div>
+              <div className="text-center p-3 rounded-lg bg-gradient-to-br from-amber-400 to-orange-600 border border-orange-400/50">
+                <div className="text-yellow-100 text-xl font-bold">{stats.anomalyBreakdown.loitering}</div>
+                <div className="text-xs text-gray-300">Loitering</div>
+              </div>
+              <div className="text-center p-3 rounded-lg bg-gradient-to-br from-cyan-400 to-teal-500 border border-cyan-400/50">
+                <div className="text-cyan-100 text-xl font-bold">{stats.anomalyBreakdown.speed}</div>
+                <div className="text-xs text-gray-300">Speed</div>
+              </div>
+              <div className="text-center p-3 rounded-lg bg-gradient-to-br from-indigo-400 to-blue-600 border border-blue-400/50">
+                <div className="text-blue-100 text-xl font-bold">{stats.anomalyBreakdown.deviation}</div>
+                <div className="text-xs text-gray-300">Deviation</div>
+              </div>
+            </div>
+          </div>
 
-      {/* Quick Actions */}
-      <div className="bg-slate-800/30 backdrop-blur-sm rounded-xl border border-cyan-500/30 p-4">
-        <h3 className="text-lg font-semibold text-cyan-400 mb-4">Quick Actions</h3>
-        <div className="grid grid-cols-2 gap-2">
-          <button className="py-2 px-3 bg-teal-600/20 hover:bg-teal-600/30 text-teal-400 rounded-lg transition-all text-xs border border-teal-500/30">
-            📊 Export Log
-          </button>
-          <button className="py-2 px-3 bg-orange-600/20 hover:bg-orange-600/30 text-orange-400 rounded-lg transition-all text-xs border border-orange-500/30">
-            🚨 Alert Mode
-          </button>
-          <button className="py-2 px-3 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded-lg transition-all text-xs border border-blue-500/30">
-            🔄 Refresh Data
-          </button>
-          <button className="py-2 px-3 bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 rounded-lg transition-all text-xs border border-purple-500/30">
-            🔍 Full Screen
-          </button>
+          {/* === Live Alerts === */}
+          <div className="bg-slate-800/30 rounded-xl border border-cyan-500/30 p-4 flex-1">
+            <h3 className="text-lg font-semibold text-cyan-400 mb-4">Live Alerts</h3>
+            <div className="space-y-3 max-h-96 overflow-y-auto">
+              {alerts.map((alert) => (
+                <div
+                  key={alert.id}
+                  className={`p-3 rounded-lg border transition-all hover:scale-[1.02] ${alert.acknowledged ? 'opacity-60' : ''}`}
+                  onClick={() => handleAlertClick(alert)}
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <div>
+                      <div className="font-semibold text-sm text-white">{alert.vessel}</div>
+                      <div className="text-xs text-gray-300 capitalize">{alert.type} Alert</div>
+                    </div>
+                    <div className="text-xs text-gray-400">{alert.timestamp.toLocaleTimeString()}</div>
+                  </div>
+                  <div className="text-xs text-gray-300 mb-2">{alert.description}</div>
+                  <div className="flex items-center space-x-2">
+                    {!alert.acknowledged && (
+                      <button onClick={(e) => handleAcknowledge(alert.id, e)} className="px-2 py-1 bg-cyan-600 hover:bg-cyan-700 text-white rounded text-xs">✓ ACK</button>
+                    )}
+                    <button onClick={(e) => handleDismiss(alert.id, e)} className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-red-400 rounded text-xs">✕ Dismiss</button>
+                    <span className={`px-2 py-1 text-xs font-bold rounded ${
+                      alert.severity === 'high'
+                        ? 'bg-red-600 text-white'
+                        : alert.severity === 'medium'
+                        ? 'bg-yellow-400 text-black'
+                        : 'bg-green-500 text-white'
+                    }`}>
+                      {alert.severity.toUpperCase()}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button className="w-full mt-4 py-2 px-4 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg transition-all text-sm">
+              View All Alerts ({alerts.length})
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };
