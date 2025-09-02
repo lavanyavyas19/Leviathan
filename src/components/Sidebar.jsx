@@ -8,8 +8,6 @@ const Sidebar = ({ activeView, setActiveView }) => {
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'vessel-logs', label: 'Vessel Logs' },
     { id: 'anomaly-reports', label: 'Anomaly Reports' },
-    { id: 'heatmaps', label: 'Heatmaps' },
-    { id: 'playback', label: 'Playback' },
     { id: 'reports-export', label: 'Reports/Export' },
     { id: 'settings', label: 'Settings' },
   ];

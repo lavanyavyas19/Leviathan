@@ -98,12 +98,7 @@ const Dashboard = ({ onLogout }) => {
             </div>
           )}
 
-          {/* === Vessel Logs === */}
-          {activeView === 'vessel-logs' && (
-            <div className="flex-1 flex items-center justify-center text-gray-400">
-              Vessel Logs view coming soon...
-            </div>
-          )}
+        
 
           {/* === Heatmaps === */}
           {activeView === 'heatmaps' && (

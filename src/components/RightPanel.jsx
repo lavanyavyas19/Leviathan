@@ -106,7 +106,53 @@ const RightPanel = ({ onAlertClick }) => {
 
       {!collapsed && (
         <div className="p-6 space-y-6 overflow-y-auto">
+
+         {/* === Live Alerts === */}
+         <div className="bg-slate-800/30 rounded-xl border border-cyan-500/30 p-4 flex-1">
+            <h3 className="text-lg font-semibold text-cyan-400 mb-4">Live Alerts</h3>
+            <div className="space-y-3 max-h-96 overflow-y-auto">
+              {alerts.map((alert) => (
+                <div
+                  key={alert.id}
+                  className={`p-3 rounded-lg border transition-all hover:scale-[1.02] ${alert.acknowledged ? 'opacity-60' : ''}`}
+                  onClick={() => handleAlertClick(alert)}
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <div>
+                      <div className="font-semibold text-sm text-white">{alert.vessel}</div>
+                      <div className="text-xs text-gray-300 capitalize">{alert.type} Alert</div>
+                    </div>
+                    <div className="text-xs text-gray-400">{alert.timestamp.toLocaleTimeString()}</div>
+                  </div>
+                  <div className="text-xs text-gray-300 mb-2">{alert.description}</div>
+                  <div className="flex items-center space-x-2">
+                    {!alert.acknowledged && (
+                      <button onClick={(e) => handleAcknowledge(alert.id, e)} className="px-2 py-1 bg-cyan-600 hover:bg-cyan-700 text-white rounded text-xs">✓ ACK</button>
+                    )}
+                    <button onClick={(e) => handleDismiss(alert.id, e)} className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-red-400 rounded text-xs">✕ Dismiss</button>
+                    <span className={`px-2 py-1 text-xs font-bold rounded ${
+                      alert.severity === 'high'
+                        ? 'bg-red-600 text-white'
+                        : alert.severity === 'medium'
+                        ? 'bg-yellow-400 text-black'
+                        : 'bg-green-500 text-white'
+                    }`}>
+                      {alert.severity.toUpperCase()}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button className="w-full mt-4 py-2 px-4 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg transition-all text-sm">
+              View All Alerts ({alerts.length})
+            </button>
+          </div>
+
+
+
+
           {/* === System Status === */}
+
           <div className="bg-slate-800/30 rounded-xl border border-cyan-500/30 p-4">
             <h3 className="text-lg font-semibold text-cyan-400 mb-4">System Status</h3>
             <div className="space-y-4">
@@ -162,46 +208,7 @@ const RightPanel = ({ onAlertClick }) => {
             </div>
           </div>
 
-          {/* === Live Alerts === */}
-          <div className="bg-slate-800/30 rounded-xl border border-cyan-500/30 p-4 flex-1">
-            <h3 className="text-lg font-semibold text-cyan-400 mb-4">Live Alerts</h3>
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              {alerts.map((alert) => (
-                <div
-                  key={alert.id}
-                  className={`p-3 rounded-lg border transition-all hover:scale-[1.02] ${alert.acknowledged ? 'opacity-60' : ''}`}
-                  onClick={() => handleAlertClick(alert)}
-                >
-                  <div className="flex items-start justify-between mb-2">
-                    <div>
-                      <div className="font-semibold text-sm text-white">{alert.vessel}</div>
-                      <div className="text-xs text-gray-300 capitalize">{alert.type} Alert</div>
-                    </div>
-                    <div className="text-xs text-gray-400">{alert.timestamp.toLocaleTimeString()}</div>
-                  </div>
-                  <div className="text-xs text-gray-300 mb-2">{alert.description}</div>
-                  <div className="flex items-center space-x-2">
-                    {!alert.acknowledged && (
-                      <button onClick={(e) => handleAcknowledge(alert.id, e)} className="px-2 py-1 bg-cyan-600 hover:bg-cyan-700 text-white rounded text-xs">✓ ACK</button>
-                    )}
-                    <button onClick={(e) => handleDismiss(alert.id, e)} className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-red-400 rounded text-xs">✕ Dismiss</button>
-                    <span className={`px-2 py-1 text-xs font-bold rounded ${
-                      alert.severity === 'high'
-                        ? 'bg-red-600 text-white'
-                        : alert.severity === 'medium'
-                        ? 'bg-yellow-400 text-black'
-                        : 'bg-green-500 text-white'
-                    }`}>
-                      {alert.severity.toUpperCase()}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <button className="w-full mt-4 py-2 px-4 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg transition-all text-sm">
-              View All Alerts ({alerts.length})
-            </button>
-          </div>
+          
         </div>
       )}
     </div>
