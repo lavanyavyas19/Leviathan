@@ -1,11 +1,14 @@
 from fastapi import FastAPI
-from app.routes import spoofing, loitering
+from routes import spoofing, loitering, ingestion
 
-app = FastAPI(title="LEVIATHAN Anomaly Engine")
+app = FastAPI(title="Leviathan Backend")
 
-app.include_router(spoofing.router)
-app.include_router(loitering.router)
+# Include Routers
+app.include_router(spoofing.router, prefix="/api/spoofing", tags=["Spoofing Detection"])
+app.include_router(loitering.router, prefix="/api/loitering", tags=["Loitering Detection"])
+app.include_router(ingestion.router, prefix="/api/ingestion", tags=["Data Ingestion"])
 
 @app.get("/")
-def home():
-    return {"message": "LEVIATHAN anomaly engine is running"}
+def root():
+    return {"message": "Leviathan Backend is running!"}
+

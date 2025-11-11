@@ -5,4 +5,9 @@ numpy
 fastapi
 uvicorn
 gdown
+pydantic
+datetime
+geopy
+pydantic-settings
+python-multipart
 
