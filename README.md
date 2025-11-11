@@ -31,3 +31,27 @@ pnpm run dev
 ```shell
 Pnpm run build
 ```
+
+**To create python virtual environment**
+
+```shell
+python -m venv venv
+venv\Scripts\activate   # (on Windows)
+```
+
+```shell
+python -m venv venv
+source venv/bin/activate   # (on macOS/Linux)
+```
+
+**Install backend dependencies**
+
+```shell
+pip install -r requirements.txt
+```
+
+**Run the training script**
+
+```shell
+python train_spoofing_model.py
+```
