@@ -54,4 +54,10 @@ pip install -r requirements.txt
 
 ```shell
 python train_spoofing_model.py
+python train_loitering_model.py
+```
+**Run backend**
+
+```shell
+uvicorn entry:app --reload
 ```
