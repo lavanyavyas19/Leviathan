@@ -8,6 +8,7 @@ import VesselLogs from './VesselLogs';
 const Dashboard = ({ onLogout }) => {
   const [activeView, setActiveView] = useState('dashboard');
   const [isPanelOpen, setIsPanelOpen] = useState(true);
+  const [datasetUploaded, setDatasetUploaded] = useState(false); // ✅ New state
 
   return (
     <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-blue-900 text-white min-h-screen flex flex-col">
@@ -64,7 +65,11 @@ const Dashboard = ({ onLogout }) => {
       <div className="flex flex-1 overflow-y-auto">
         
         {/* Sidebar */}
-        <Sidebar activeView={activeView} setActiveView={setActiveView} />
+        <Sidebar 
+          activeView={activeView} 
+          setActiveView={setActiveView} 
+          setDatasetUploaded={setDatasetUploaded}  // ✅ pass setter
+        />
 
         {/* ===== Page Content Area ===== */}
         <main className="flex-1 flex flex-col p-6 gap-6">
@@ -81,12 +86,11 @@ const Dashboard = ({ onLogout }) => {
                 {/* Right Panel */}
                 {isPanelOpen && (
                   <div className="w-[350px] transition-all duration-300 flex-shrink-0">
-                    <RightPanel />
+                    {/* ✅ Pass datasetUploaded */}
+                    <RightPanel datasetUploaded={datasetUploaded} />
                   </div>
                 )}
               </div>
-
-              
             </>
           )}
 
@@ -98,37 +102,31 @@ const Dashboard = ({ onLogout }) => {
             </div>
           )}
 
-        
-
-          {/* === Heatmaps === */}
+          {/* === Other Views === */}
           {activeView === 'heatmaps' && (
             <div className="flex-1 flex items-center justify-center text-gray-400">
               Heatmaps view coming soon...
             </div>
           )}
 
-          {/* === Playback === */}
           {activeView === 'playback' && (
             <div className="flex-1 flex items-center justify-center text-gray-400">
               Playback view coming soon...
             </div>
           )}
 
-          {/* === Reports/Export === */}
           {activeView === 'reports-export' && (
             <div className="flex-1 flex items-center justify-center text-gray-400">
               Reports & Export view coming soon...
             </div>
           )}
 
-          {/* === Settings === */}
           {activeView === 'settings' && (
             <div className="flex-1 flex items-center justify-center text-gray-400">
               Settings view coming soon...
             </div>
           )}
 
-          {/* Vessel Logs */}
           {activeView === 'vessel-logs' && (
             <VesselLogs onVesselSelect={(id) => setHighlightedVesselId(id)} />
           )}

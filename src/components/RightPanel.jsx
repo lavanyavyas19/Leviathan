@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, Minus } from "lucide-react";  // ✅ Correct import
 
-const RightPanel = ({ onAlertClick }) => {
+const RightPanel = ({ onAlertClick, datasetUploaded }) => {
   const [collapsed, setCollapsed] = useState(false);
 
   const [stats, setStats] = useState({
@@ -91,6 +91,23 @@ const RightPanel = ({ onAlertClick }) => {
   };
 
   const healthInfo = getHealthSeverity(stats.systemHealth);
+    // === Hide everything until dataset is imported ===
+    if (!datasetUploaded) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full text-gray-400 text-sm border-l border-cyan-500/20 bg-slate-900/40">
+          <div className="text-cyan-400 text-lg mb-2">📡 Awaiting Dataset Upload</div>
+          <p className="text-gray-400 text-center max-w-[220px] leading-relaxed">
+            Import your AIS dataset to activate <br />
+            <span className="text-cyan-300">Live Alerts</span>, <span className="text-cyan-300">System Status</span>, <br />
+            and <span className="text-cyan-300">Anomaly Breakdown</span>.
+          </p>
+          <div className="w-3 h-3 bg-cyan-400 rounded-full animate-pulse mt-4"></div>
+        </div>
+      );
+    }
+   
+
+
 
   // === UI ===
   return (
