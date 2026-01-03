@@ -9,6 +9,8 @@ const Dashboard = ({ onLogout }) => {
   const [activeView, setActiveView] = useState('dashboard');
   const [isPanelOpen, setIsPanelOpen] = useState(true);
   const [datasetUploaded, setDatasetUploaded] = useState(false); // ✅ New state
+  const [highlightedVesselId, setHighlightedVesselId] = useState(null);
+  const [vesselLogsFilter, setVesselLogsFilter] = useState(null); // For filtering from chart clicks
 
   return (
     <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-blue-900 text-white min-h-screen flex flex-col">
@@ -80,14 +82,19 @@ const Dashboard = ({ onLogout }) => {
               <div className="flex flex-1 relative gap-6">
                 {/* Map View */}
                 <div className="flex-1 transition-all duration-300">
-                  <MapView />
+                  <MapView 
+                    highlightedVesselId={highlightedVesselId}
+                    onVesselClick={(vessel) => setHighlightedVesselId(vessel?.id)}
+                  />
                 </div>
 
                 {/* Right Panel */}
                 {isPanelOpen && (
                   <div className="w-[350px] transition-all duration-300 flex-shrink-0">
-                    {/* ✅ Pass datasetUploaded */}
-                    <RightPanel datasetUploaded={datasetUploaded} />
+                    <RightPanel 
+                      datasetUploaded={datasetUploaded}
+                      onAlertClick={(vesselId) => setHighlightedVesselId(vesselId)}
+                    />
                   </div>
                 )}
               </div>
@@ -97,8 +104,22 @@ const Dashboard = ({ onLogout }) => {
           {/* === Anomaly Reports View === */}
           {activeView === 'anomaly-reports' && (
             <div className="flex-1 bg-slate-800/40 rounded-xl border border-cyan-500/30 p-4 shadow-lg shadow-cyan-500/10">
-              <h2 className="text-lg font-semibold text-cyan-400 mb-4">Anomaly Detection Trends</h2>
-              <BottomChart />
+              <BottomChart 
+                onChartClick={(data) => {
+                  // Navigate to dashboard view when chart is clicked
+                  setActiveView('dashboard');
+                }}
+                onAnomalyFilter={(filter) => {
+                  // Filter vessels by anomaly type and navigate to vessel logs
+                  setVesselLogsFilter(filter);
+                  setActiveView('vessel-logs');
+                }}
+                onVesselHighlight={(data) => {
+                  // Highlight vessels on map (would need actual vessel IDs in real implementation)
+                  // For now, just navigate to dashboard
+                  setActiveView('dashboard');
+                }}
+              />
             </div>
           )}
 
@@ -128,7 +149,14 @@ const Dashboard = ({ onLogout }) => {
           )}
 
           {activeView === 'vessel-logs' && (
-            <VesselLogs onVesselSelect={(id) => setHighlightedVesselId(id)} />
+            <VesselLogs 
+              onVesselSelect={(id) => {
+                setHighlightedVesselId(id);
+                setActiveView('dashboard');
+              }}
+              externalFilter={vesselLogsFilter}
+              onFilterClear={() => setVesselLogsFilter(null)}
+            />
           )}
           
         </main>

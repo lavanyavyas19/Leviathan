@@ -2,8 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, Minus } from "lucide-react";  // ✅ Correct import
 
 const RightPanel = ({ onAlertClick, datasetUploaded }) => {
-  const [collapsed, setCollapsed] = useState(false);
-
   const [stats, setStats] = useState({
     vesselsTracked: 1247,
     anomaliesDetected: 23,
@@ -111,59 +109,60 @@ const RightPanel = ({ onAlertClick, datasetUploaded }) => {
 
   // === UI ===
   return (
-    <div className={`transition-all duration-500 ease-in-out ${collapsed ? "w-10" : "w-80"} bg-slate-900/50 border-l border-cyan-500/20 flex flex-col relative`}>
-      {/* Collapse toggle */}
-      <button
-        onClick={() => setCollapsed(!collapsed)}
-        className="absolute -left-6 top-4 bg-slate-800/60 hover:bg-slate-700/80 
-                   border border-cyan-500/30 text-cyan-400 px-2 py-1 rounded-r-lg text-xs"
-      >
-        {collapsed ? "›" : "‹"}
-      </button>
-
-      {!collapsed && (
-        <div className="p-6 space-y-6 overflow-y-auto">
-
-         {/* === Live Alerts === */}
-         <div className="bg-slate-800/30 rounded-xl border border-cyan-500/30 p-4 flex-1">
-            <h3 className="text-lg font-semibold text-cyan-400 mb-4">Live Alerts</h3>
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              {alerts.map((alert) => (
-                <div
-                  key={alert.id}
-                  className={`p-3 rounded-lg border transition-all hover:scale-[1.02] ${alert.acknowledged ? 'opacity-60' : ''}`}
-                  onClick={() => handleAlertClick(alert)}
-                >
-                  <div className="flex items-start justify-between mb-2">
-                    <div>
-                      <div className="font-semibold text-sm text-white">{alert.vessel}</div>
-                      <div className="text-xs text-gray-300 capitalize">{alert.type} Alert</div>
-                    </div>
-                    <div className="text-xs text-gray-400">{alert.timestamp.toLocaleTimeString()}</div>
+    <div className="w-full bg-slate-900/50 border-l border-cyan-500/20 flex flex-col">
+      <div className="p-6 space-y-6 overflow-y-auto">
+        {/* === Live Alerts === */}
+        <div className="bg-slate-800/30 rounded-xl border border-cyan-500/30 p-4">
+          <h3 className="text-lg font-semibold text-cyan-400 mb-4">Live Alerts</h3>
+          <div className="space-y-3 max-h-96 overflow-y-auto">
+            {alerts.filter(alert => !alert.acknowledged).slice(0, 5).map((alert) => (
+              <div
+                key={alert.id}
+                className="p-3 rounded-lg border border-cyan-500/20 bg-slate-700/30 transition-all hover:bg-slate-700/50 cursor-pointer"
+                onClick={() => handleAlertClick(alert)}
+              >
+                <div className="flex items-start justify-between mb-2">
+                  <div className="flex-1">
+                    <div className="font-semibold text-sm text-white">{alert.vessel}</div>
+                    <div className="text-xs text-gray-300 capitalize">{alert.type} Alert</div>
                   </div>
-                  <div className="text-xs text-gray-300 mb-2">{alert.description}</div>
-                  <div className="flex items-center space-x-2">
-                    {!alert.acknowledged && (
-                      <button onClick={(e) => handleAcknowledge(alert.id, e)} className="px-2 py-1 bg-cyan-600 hover:bg-cyan-700 text-white rounded text-xs">✓ ACK</button>
-                    )}
-                    <button onClick={(e) => handleDismiss(alert.id, e)} className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-red-400 rounded text-xs">✕ Dismiss</button>
-                    <span className={`px-2 py-1 text-xs font-bold rounded ${
-                      alert.severity === 'high'
-                        ? 'bg-red-600 text-white'
-                        : alert.severity === 'medium'
-                        ? 'bg-yellow-400 text-black'
-                        : 'bg-green-500 text-white'
-                    }`}>
-                      {alert.severity.toUpperCase()}
-                    </span>
-                  </div>
+                  <div className="text-xs text-gray-400 whitespace-nowrap ml-2">{alert.timestamp.toLocaleTimeString()}</div>
                 </div>
-              ))}
-            </div>
-            <button className="w-full mt-4 py-2 px-4 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg transition-all text-sm">
-              View All Alerts ({alerts.length})
-            </button>
+                <div className="text-xs text-gray-300 mb-3">{alert.description}</div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    {!alert.acknowledged && (
+                      <button 
+                        onClick={(e) => handleAcknowledge(alert.id, e)} 
+                        className="px-2 py-1 bg-cyan-600 hover:bg-cyan-700 text-white rounded text-xs transition-colors"
+                      >
+                        ✓ ACK
+                      </button>
+                    )}
+                    <button 
+                      onClick={(e) => handleDismiss(alert.id, e)} 
+                      className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-red-400 rounded text-xs transition-colors"
+                    >
+                      ✕ Dismiss
+                    </button>
+                  </div>
+                  <span className={`px-2 py-1 text-xs font-bold rounded whitespace-nowrap ${
+                    alert.severity === 'high'
+                      ? 'bg-red-600 text-white'
+                      : alert.severity === 'medium'
+                      ? 'bg-yellow-400 text-black'
+                      : 'bg-green-500 text-white'
+                  }`}>
+                    {alert.severity.toUpperCase()}
+                  </span>
+                </div>
+              </div>
+            ))}
           </div>
+          <button className="w-full mt-4 py-2 px-4 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg transition-all text-sm">
+            View All Alerts ({alerts.length})
+          </button>
+        </div>
 
 
 
@@ -202,8 +201,8 @@ const RightPanel = ({ onAlertClick, datasetUploaded }) => {
             </div>
           </div>
 
-          {/* === Anomaly Breakdown === */}
-          <div className="bg-slate-800/30 backdrop-blur-sm rounded-xl border border-cyan-500/30 p-4">
+        {/* === Anomaly Breakdown === */}
+        <div className="bg-slate-800/30 backdrop-blur-sm rounded-xl border border-cyan-500/30 p-4">
             <h3 className="text-lg font-semibold text-cyan-400 mb-4">Anomaly Breakdown</h3>
             <div className="grid grid-cols-2 gap-4">
               <div className="text-center p-3 rounded-lg bg-gradient-to-br from-red-500 to-red-700 border border-red-400/50">
@@ -224,10 +223,7 @@ const RightPanel = ({ onAlertClick, datasetUploaded }) => {
               </div>
             </div>
           </div>
-
-          
-        </div>
-      )}
+      </div>
     </div>
   );
 };

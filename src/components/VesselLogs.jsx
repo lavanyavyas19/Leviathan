@@ -1,11 +1,20 @@
 import React, { useState } from 'react';
+import { MapPin } from 'lucide-react';
 
-const VesselLogs = ({ onVesselSelect }) => {
+const VesselLogs = ({ onVesselSelect, externalFilter, onFilterClear }) => {
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [selectedVessel, setSelectedVessel] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const rowsPerPage = 5;
+
+  // Apply external filter when provided (from chart click)
+  React.useEffect(() => {
+    if (externalFilter) {
+      setFilter(externalFilter.type);
+      setCurrentPage(1); // Reset to first page
+    }
+  }, [externalFilter]);
 
   const vessels = [
     { id: 1, name: 'MV-ATLANTIC-STAR', mmsi: 366123456, type: 'Cargo', lat: '27.5°N', lon: '94.2°W', speed: 12.5, status: 'normal', updated: '10:32:21', destination: 'Port Houston', draft: '12.4m' },
@@ -50,7 +59,12 @@ const VesselLogs = ({ onVesselSelect }) => {
         <select 
           className="bg-slate-700 text-gray-300 px-3 py-2 rounded-lg border border-slate-600"
           value={filter}
-          onChange={(e) => setFilter(e.target.value)}
+          onChange={(e) => {
+            setFilter(e.target.value);
+            if (onFilterClear && externalFilter) {
+              onFilterClear();
+            }
+          }}
         >
           <option value="all">All Status</option>
           <option value="normal">Normal</option>
@@ -64,6 +78,22 @@ const VesselLogs = ({ onVesselSelect }) => {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
+        {externalFilter && (
+          <div className="flex items-center space-x-2 px-3 py-2 bg-cyan-600/20 border border-cyan-500/50 rounded-lg">
+            <span className="text-xs text-cyan-300">Filtered from chart:</span>
+            <span className="text-xs font-semibold text-cyan-400 capitalize">{externalFilter.type}</span>
+            <button
+              onClick={() => {
+                setFilter('all');
+                if (onFilterClear) onFilterClear();
+              }}
+              className="text-cyan-400 hover:text-red-400 transition-colors ml-2"
+              title="Clear filter"
+            >
+              ✕
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Table */}
@@ -131,47 +161,71 @@ const VesselLogs = ({ onVesselSelect }) => {
 
       {/* Modal for Vessel Details */}
       {selectedVessel && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-slate-900 border border-cyan-500/40 rounded-xl shadow-2xl p-6 w-[400px] relative">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 border border-cyan-500/40 rounded-xl shadow-2xl p-6 w-full max-w-md relative">
             {/* Close Button */}
             <button 
               onClick={() => setSelectedVessel(null)} 
-              className="absolute top-3 right-3 text-gray-400 hover:text-red-400"
+              className="absolute top-3 right-3 text-gray-400 hover:text-red-400 transition-colors p-1"
+              aria-label="Close modal"
             >
               ✕
             </button>
 
             {/* Vessel Details */}
-            <h3 className="text-lg font-bold text-cyan-400 mb-4">{selectedVessel.name}</h3>
-            <div className="space-y-2 text-sm text-gray-300">
-              <p><strong>MMSI:</strong> {selectedVessel.mmsi}</p>
-              <p><strong>Type:</strong> {selectedVessel.type}</p>
-              <p><strong>Coordinates:</strong> {selectedVessel.lat}, {selectedVessel.lon}</p>
-              <p><strong>Speed:</strong> {selectedVessel.speed} kts</p>
-              <p><strong>Status:</strong> 
-                <span className={`ml-2 px-2 py-1 rounded text-xs font-bold ${getStatusColor(selectedVessel.status)}`}>
+            <h3 className="text-lg font-bold text-cyan-400 mb-4 pr-8">{selectedVessel.name}</h3>
+            <div className="space-y-3 text-sm text-gray-300">
+              <div className="flex justify-between items-center">
+                <span className="text-gray-400">MMSI:</span>
+                <span className="font-mono text-white">{selectedVessel.mmsi}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-400">Type:</span>
+                <span className="text-white">{selectedVessel.type}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-400">Coordinates:</span>
+                <span className="font-mono text-white">{selectedVessel.lat}, {selectedVessel.lon}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-400">Speed:</span>
+                <span className="font-mono text-white">{selectedVessel.speed} kts</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-400">Status:</span>
+                <span className={`px-2 py-1 rounded text-xs font-bold ${getStatusColor(selectedVessel.status)}`}>
                   {selectedVessel.status.toUpperCase()}
                 </span>
-              </p>
-              <p><strong>Destination:</strong> {selectedVessel.destination}</p>
-              <p><strong>Draft:</strong> {selectedVessel.draft}</p>
-              <p><strong>Last Update:</strong> {selectedVessel.updated}</p>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-400">Destination:</span>
+                <span className="text-white">{selectedVessel.destination}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-400">Draft:</span>
+                <span className="text-white">{selectedVessel.draft}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-400">Last Update:</span>
+                <span className="font-mono text-white">{selectedVessel.updated}</span>
+              </div>
             </div>
 
             {/* Actions */}
-            <div className="mt-4 flex space-x-3">
+            <div className="mt-6 flex flex-col sm:flex-row gap-3">
               <button 
                 onClick={() => {
                   onVesselSelect?.(selectedVessel.id);
                   setSelectedVessel(null);
                 }}
-                className="flex-1 bg-cyan-600 hover:bg-cyan-700 text-white py-2 rounded-lg transition-all"
+                className="flex-1 bg-cyan-600 hover:bg-cyan-700 text-white py-2.5 rounded-lg transition-all flex items-center justify-center space-x-2 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2 focus:ring-offset-slate-900"
               >
-                View on Map
+                <MapPin className="w-4 h-4" aria-hidden="true" />
+                <span>View on Map</span>
               </button>
               <button 
                 onClick={() => setSelectedVessel(null)}
-                className="flex-1 bg-gray-700 hover:bg-gray-600 text-gray-300 py-2 rounded-lg transition-all"
+                className="flex-1 bg-gray-700/50 hover:bg-gray-600 text-gray-300 py-2.5 rounded-lg transition-all border border-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 focus:ring-offset-slate-900"
               >
                 Close
               </button>
