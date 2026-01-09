@@ -18,7 +18,9 @@ app.add_middleware(
 # include routers
 app.include_router(spoofing.router,  prefix="/api/spoofing",  tags=["Spoofing Detection"])
 app.include_router(loitering.router,  prefix="/api/loitering", tags=["Loitering Detection"])
-app.include_router(ingestion.router,  prefix="/api",          tags=["Data Ingestion"])
+
+# ✅ corrected ingestion router
+app.include_router(ingestion.router,  prefix="/api", tags=["Data Ingestion"])
 
 @app.get("/")
 def root():

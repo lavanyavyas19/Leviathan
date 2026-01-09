@@ -1,13 +1,28 @@
+# Machine Learning & Data Processing
 scikit-learn
 joblib
 pandas
 numpy
+
+# Web Framework & API
 fastapi
 uvicorn
-gdown
 pydantic
-datetime
-geopy
 pydantic-settings
 python-multipart
 
+# Geospatial
+geopy
+
+# Data Download
+gdown
+
+# AWS Integration (NEW)
+boto3>=1.28.0
+botocore
+
+# Environment Configuration (NEW)
+python-dotenv
+
+# HTTP Requests (NEW - Optional)
+requests
