@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import Sidebar from './Sidebar';
 import MapView from './MapView';
 import RightPanel from './RightPanel';
@@ -11,46 +11,6 @@ const Dashboard = ({ onLogout }) => {
   const [datasetUploaded, setDatasetUploaded] = useState(false); // ✅ New state
   const [highlightedVesselId, setHighlightedVesselId] = useState(null);
   const [vesselLogsFilter, setVesselLogsFilter] = useState(null); // For filtering from chart clicks
-  const [datasetSummary, setDatasetSummary] = useState(null);
-  const [datasetSummaryLoading, setDatasetSummaryLoading] = useState(false);
-  const [datasetSummaryError, setDatasetSummaryError] = useState(null);
-
-const API_BASE = "http://127.0.0.1:8000"; // keep consistent with backend
-
-const fetchDatasetSummary = async () => {
-  setDatasetSummaryLoading(true);
-  setDatasetSummaryError(null);
-
-  try {
-    const res = await fetch(`${API_BASE}/api/dataset/summary`);
-
-    if (!res.ok) {
-      if (res.status === 404) {
-        setDatasetSummary(null);
-        return;
-      }
-      throw new Error(`Failed to fetch summary (${res.status})`);
-    }
-
-    const data = await res.json();
-    setDatasetSummary(data);
-  } catch (e) {
-    setDatasetSummaryError(e.message);
-  } finally {
-    setDatasetSummaryLoading(false);
-  }
-};
-useEffect(() => {
-  fetchDatasetSummary();
-}, []);
-
-useEffect(() => {
-  if (datasetUploaded) {
-    fetchDatasetSummary();
-  }
-}, [datasetUploaded]);
-
-
 
   return (
     <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-blue-900 text-white min-h-screen flex flex-col">

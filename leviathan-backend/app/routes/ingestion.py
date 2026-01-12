@@ -1,81 +1,75 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
-from fastapi.responses import JSONResponse
-from dotenv import load_dotenv
-from uuid import uuid4
-import os, shutil
+# app/routes/ingestion.py
 
+from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi.responses import JSONResponse
 from app.core.ingestion_engine import run_ingestion_pipeline
 from app.utils.s3_upload import upload_raw_csv_to_s3
-from app.core.job_store import create_job, update_job, get_job
+import os
+import shutil
+from dotenv import load_dotenv
 
 load_dotenv()
+
 router = APIRouter()
 
+# Define data directory where uploaded files are stored
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
-def _process_ingestion_job(job_id: str, temp_path: str, clean_bucket: str):
-    try:
-        update_job(job_id, {"status": "processing", "step": "clean_and_preprocess"})
-
-        pipeline_result = run_ingestion_pipeline(temp_path, clean_bucket)
-
-        update_job(job_id, {"status": "done", "step": "completed", "result": pipeline_result})
-
-    except Exception as e:
-        update_job(job_id, {"status": "failed", "error": str(e)})
-
-    finally:
-        try:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-        except:
-            pass
 
 @router.post("/upload-ais-data")
-async def upload_ais_data(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+async def upload_ais_data(file: UploadFile = File(...)):
+    """
+    Upload an AIS CSV file, upload to S3 raw bucket, and trigger the ingestion + preprocessing pipeline.
+    """
     try:
+        # Ensure only valid file types are accepted
         if not file.filename.lower().endswith((".csv", ".json", ".gz", ".csv.gz")):
             raise HTTPException(status_code=400, detail="Only .csv, .json, or .csv.gz files are allowed.")
 
-        raw_bucket = os.getenv("AWS_S3_RAW_BUCKET", "leviathan6475ae6b4f4b48dfa336e5b0541df3904d7b5-dev")
-        clean_bucket = os.getenv("AWS_S3_CLEAN_BUCKET", "leviathan6475ae6b4f4b48dfa336e5b0541df3904d7b5-dev")
-
-        # 1) Create job
-        job_id = str(uuid4())
-        create_job(job_id, {"status": "uploading", "filename": file.filename})
-
-        # 2) Upload raw to S3
+        # ========== NEW: Upload to S3 Raw Bucket ==========
+        raw_bucket = os.getenv(
+            'AWS_S3_RAW_BUCKET',
+            'leviathan6475ae6b4f4b48dfa336e5b0541df3904d7b5-dev'
+        )
+        
+        # Upload raw file to S3
         upload_result = await upload_raw_csv_to_s3(file, raw_bucket)
-        if not upload_result["success"]:
-            update_job(job_id, {"status": "failed", "error": upload_result.get("message")})
-            raise HTTPException(status_code=500, detail=upload_result.get("message"))
+        
+        if not upload_result['success']:
+            raise HTTPException(
+                status_code=500,
+                detail=f"S3 upload failed: {upload_result.get('message')}"
+            )
+        # ==================================================
 
-        update_job(job_id, {"status": "queued", "raw_s3": upload_result})
-
-        # 3) Save locally
+        # Reset file pointer after S3 upload
         await file.seek(0)
-        temp_path = os.path.join(DATA_DIR, f"{job_id}_{file.filename}")
+
+        # Save uploaded file temporarily for local processing
+        temp_path = os.path.join(DATA_DIR, file.filename)
         with open(temp_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        # 4) Background processing
-        background_tasks.add_task(_process_ingestion_job, job_id, temp_path, clean_bucket)
+        # Run your custom ingestion pipeline (returns path to processed file)
+        processed_path = run_ingestion_pipeline(temp_path)
 
-        # 5) Return immediately
+        # Build clean frontend-friendly JSON response with S3 info
         return JSONResponse({
-            "status": "accepted",
-            "job_id": job_id,
-            "message": "Upload complete ✅ Processing started in background.",
-            "raw_s3": upload_result
+            "status": "success",
+            "message": "AIS data uploaded to S3 and processed successfully.",
+            "original_file": file.filename,
+            "processed_file": os.path.basename(processed_path),
+            # NEW: S3 upload info
+            "s3_upload": {
+                "status": "uploaded",
+                "bucket": upload_result['bucket'],
+                "key": upload_result['s3_key'],
+                "s3_location": f"s3://{upload_result['bucket']}/{upload_result['s3_key']}",
+                "size_bytes": upload_result['size_bytes'],
+                "lifecycle": "Auto-delete after 3 days"
+            }
         })
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/jobs/{job_id}")
-def get_job_status(job_id: str):
-    job = get_job(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    return job
+        raise HTTPException(status_code=500, detail=f"Error during ingestion: {str(e)}")
