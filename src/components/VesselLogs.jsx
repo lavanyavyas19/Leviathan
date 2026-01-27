@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { MapPin } from 'lucide-react';
 
-const VesselLogs = ({ onVesselSelect, externalFilter, onFilterClear }) => {
+const VesselLogs = ({ vesselLogs: propVesselLogs = [], onVesselSelect, externalFilter, onFilterClear }) => {
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [selectedVessel, setSelectedVessel] = useState(null);
@@ -15,19 +15,58 @@ const VesselLogs = ({ onVesselSelect, externalFilter, onFilterClear }) => {
       setCurrentPage(1); // Reset to first page
     }
   }, [externalFilter]);
+    // Reset pagination when filter or search changes
+React.useEffect(() => {
+  setCurrentPage(1);
+}, [filter, search]);
 
-  const vessels = [
-    { id: 1, name: 'MV-ATLANTIC-STAR', mmsi: 366123456, type: 'Cargo', lat: '27.5°N', lon: '94.2°W', speed: 12.5, status: 'normal', updated: '10:32:21', destination: 'Port Houston', draft: '12.4m' },
-    { id: 2, name: 'GULF-RUNNER-07', mmsi: 366234567, type: 'Tanker', lat: '28.1°N', lon: '92.8°W', speed: 0.0, status: 'loitering', updated: '10:28:17', destination: 'Anchorage', draft: '15.7m' },
-    { id: 3, name: 'OCEAN-BREEZE-12', mmsi: 366345678, type: 'Fishing', lat: '26.9°N', lon: '90.5°W', speed: 19.2, status: 'spoofing', updated: '10:21:43', destination: 'Unknown', draft: '6.3m' },
-    { id: 4, name: 'PACIFIC-VOYAGER', mmsi: 366456789, type: 'Passenger', lat: '29.2°N', lon: '91.1°W', speed: 16.3, status: 'normal', updated: '10:35:50', destination: 'New Orleans', draft: '8.2m' },
-    { id: 5, name: 'TIDE-MASTER-21', mmsi: 366567890, type: 'Tug', lat: '28.6°N', lon: '93.4°W', speed: 5.7, status: 'loitering', updated: '10:40:12', destination: 'Oil Rig Bravo', draft: '4.5m' },
-    { id: 6, name: 'HORIZON-SPIRIT', mmsi: 366678901, type: 'Cargo', lat: '27.8°N', lon: '95.1°W', speed: 13.9, status: 'normal', updated: '10:36:59', destination: 'Corpus Christi', draft: '11.0m' },
-    { id: 7, name: 'SEA-HAWK-03', mmsi: 366789012, type: 'Fishing', lat: '26.7°N', lon: '89.9°W', speed: 7.8, status: 'spoofing', updated: '10:25:10', destination: 'Unknown', draft: '5.8m' },
-    { id: 8, name: 'CARIBBEAN-PEARL', mmsi: 366890123, type: 'Passenger', lat: '29.0°N', lon: '90.3°W', speed: 18.7, status: 'normal', updated: '10:45:03', destination: 'Miami', draft: '9.5m' },
-    { id: 9, name: 'NORTH-WAVE', mmsi: 366901234, type: 'Tanker', lat: '28.3°N', lon: '94.7°W', speed: 0.0, status: 'loitering', updated: '10:48:27', destination: 'Anchorage', draft: '16.2m' },
-    { id: 10, name: 'SOUTHERN-CROSS', mmsi: 367012345, type: 'Cargo', lat: '27.2°N', lon: '93.8°W', speed: 14.8, status: 'normal', updated: '10:50:11', destination: 'Mobile Port', draft: '10.9m' },
-  ];
+  // Transform backend vessel logs to UI format
+  const transformVesselLogs = (logs) => {
+    if (!logs || logs.length === 0) return [];
+    
+    return logs.map((log, idx) => {
+      // Determine status
+      let status = 'normal';
+      if (log.spoofing_flag === true || log.spoofing_flag === 'true') {
+        status = 'spoofing';
+      } else if (log.loitering_flag === true || log.loitering_flag === 'true') {
+        status = 'loitering';
+      }
+
+      // Format coordinates
+      const lat = typeof log.lat === 'number' ? `${log.lat.toFixed(1)}°${log.lat >= 0 ? 'N' : 'S'}` : (log.lat || 'N/A');
+      const lon = typeof log.lon === 'number' ? `${Math.abs(log.lon).toFixed(1)}°${log.lon >= 0 ? 'E' : 'W'}` : (log.lon || 'N/A');
+
+      // Format timestamp
+      let updated = 'N/A';
+      if (log.timestamp) {
+        try {
+          const date = new Date(log.timestamp);
+          updated = date.toLocaleTimeString();
+        } catch (e) {
+          updated = String(log.timestamp);
+        }
+      }
+
+      return {
+        id: idx + 1,
+        name: log.vessel_name || `MMSI-${log.mmsi}`,
+        mmsi: log.mmsi,
+        type: log.vessel_type || 'Unknown',
+        lat,
+        lon,
+        speed: log.sog !== undefined && log.sog !== null ? parseFloat(log.sog).toFixed(1) : '0.0',
+        status,
+        updated,
+        destination: log.destination || 'Unknown',
+        draft: log.draft ? `${log.draft}m` : 'N/A',
+        // Keep original data for modal
+        originalData: log
+      };
+    });
+  };
+
+  const vessels = transformVesselLogs(propVesselLogs);
   
   const getStatusColor = (status) => {
     switch (status) {
@@ -209,13 +248,29 @@ const VesselLogs = ({ onVesselSelect, externalFilter, onFilterClear }) => {
                 <span className="text-gray-400">Last Update:</span>
                 <span className="font-mono text-white">{selectedVessel.updated}</span>
               </div>
+              {selectedVessel.originalData && (
+                <>
+                  {selectedVessel.originalData.spoofing_score !== undefined && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-400">Spoofing Score:</span>
+                      <span className="font-mono text-white">{selectedVessel.originalData.spoofing_score?.toFixed(3) || 'N/A'}</span>
+                    </div>
+                  )}
+                  {selectedVessel.originalData.speed_class && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-400">Speed Class:</span>
+                      <span className="font-mono text-white">{selectedVessel.originalData.speed_class}</span>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
 
             {/* Actions */}
             <div className="mt-6 flex flex-col sm:flex-row gap-3">
               <button 
                 onClick={() => {
-                  onVesselSelect?.(selectedVessel.id);
+                  onVesselSelect?.(selectedVessel.mmsi || selectedVessel.id);
                   setSelectedVessel(null);
                 }}
                 className="flex-1 bg-cyan-600 hover:bg-cyan-700 text-white py-2.5 rounded-lg transition-all flex items-center justify-center space-x-2 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2 focus:ring-offset-slate-900"

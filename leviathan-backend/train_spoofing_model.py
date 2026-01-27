@@ -1,3 +1,5 @@
+# train_spoofing_model.py (improved)
+
 import os
 import pandas as pd
 import numpy as np
@@ -5,95 +7,128 @@ import joblib
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
-from datetime import datetime
 import gdown
 
-# 1. Download dataset
-drive_url = "https://drive.google.com/file/d/1DkLo9Nv_XFmrakPscNhzEsV843QS7tEq/view?usp=sharing"
+drive_url = "https://drive.google.com/file/d/1bzL9Cw8_MUVAqccKHrm0t9lntUIwq9_E/view?usp=drive_link"
 file_id = drive_url.split("/d/")[1].split("/")[0]
 download_url = f"https://drive.google.com/uc?id={file_id}"
-csv_file = "ais_data.csv"
 
-print("📥 Downloading dataset from Google Drive...")
-gdown.download(download_url, csv_file, quiet=False)
-print("✅ Download complete!")
+DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+os.makedirs(DATA_DIR, exist_ok=True)
 
-# 2. Load dataset
-try:
-    df = pd.read_csv(csv_file)
-except Exception as e:
-    raise ValueError(f"❌ Failed to read CSV. Error: {e}")
+csv_file = os.path.join(DATA_DIR, "ais_data.csv")
 
-print(f"✅ Loaded {len(df)} rows and {len(df.columns)} columns.")
-print("📊 Columns:", list(df.columns))
+if not os.path.exists(csv_file):
+    print("📥 Downloading dataset from Google Drive...")
+    gdown.download(download_url, csv_file, quiet=False)
+    print("✅ Download complete!")
+else:
+    print("✅ Dataset already exists locally")
 
-# 3. Ensure proper columns exist
-required_base = ["BaseDateTime", "LAT", "LON", "SOG", "COG"]
-for col in required_base:
+df = pd.read_csv(csv_file)
+print(f"✅ Loaded {len(df)} rows")
+
+REQUIRED_COLS = ["MMSI", "BaseDateTime", "LAT", "LON", "SOG", "COG"]
+for col in REQUIRED_COLS:
     if col not in df.columns:
-        raise ValueError(f"❌ Missing column '{col}' in dataset.")
+        raise ValueError(f"❌ Missing required column: {col}")
 
-# 4. Sort and prepare data
-df = df.sort_values(by=["MMSI", "BaseDateTime"])
+# ---- parse & clean ----
 df["BaseDateTime"] = pd.to_datetime(df["BaseDateTime"], errors="coerce")
+df = df.dropna(subset=["BaseDateTime", "MMSI"])
 
-# 5. Compute derived features
-def haversine(lat1, lon1, lat2, lon2):
-    """Compute distance between two lat/lon pairs in nautical miles."""
-    R = 6371  # Earth radius (km)
-    dlat = np.radians(lat2 - lat1)
-    dlon = np.radians(lon2 - lon1)
-    a = np.sin(dlat / 2)**2 + np.cos(np.radians(lat1)) * np.cos(np.radians(lat2)) * np.sin(dlon / 2)**2
+df["LAT"] = pd.to_numeric(df["LAT"], errors="coerce")
+df["LON"] = pd.to_numeric(df["LON"], errors="coerce")
+df["SOG"] = pd.to_numeric(df["SOG"], errors="coerce")
+df["COG"] = pd.to_numeric(df["COG"], errors="coerce")
+
+# drop invalid coordinates
+df = df.dropna(subset=["LAT", "LON"])
+df = df[(df["LAT"].between(-90, 90)) & (df["LON"].between(-180, 180))]
+
+df = df.sort_values(by=["MMSI", "BaseDateTime"])
+
+# ---- features ----
+def haversine_nm_vec(lat1, lon1, lat2, lon2):
+    lat1 = np.radians(lat1.astype(float))
+    lon1 = np.radians(lon1.astype(float))
+    lat2 = np.radians(lat2.astype(float))
+    lon2 = np.radians(lon2.astype(float))
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = np.sin(dlat / 2.0) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2.0) ** 2
     c = 2 * np.arcsin(np.sqrt(a))
-    return R * c * 0.539957  # km → nautical miles
+    km = 6371.0088 * c
+    return km * 0.539957
 
-df["speed"] = df["SOG"]
+def circular_heading_change(s):
+    diff = s.diff().abs()
+    diff = np.minimum(diff, 360 - diff)
+    return diff.fillna(0)
 
-# Compute per MMSI group
-df["heading_change"] = df.groupby("MMSI")["COG"].diff().fillna(0).abs()
-df["jump_distance"] = df.groupby("MMSI").apply(
-    lambda g: haversine(g["LAT"], g["LON"], g["LAT"].shift(), g["LON"].shift())
-).reset_index(level=0, drop=True).fillna(0)
+df["speed"] = df["SOG"].clip(0, 60).fillna(0)
 
-df["time_gap"] = df.groupby("MMSI")["BaseDateTime"].diff().dt.total_seconds().fillna(0)
+df["heading_change"] = (
+    df.groupby("MMSI")["COG"]
+    .apply(circular_heading_change)
+    .reset_index(level=0, drop=True)
+)
 
-# Replace infinities and NaNs
-df = df.replace([np.inf, -np.inf], 0).fillna(0)
+lat_prev = df.groupby("MMSI")["LAT"].shift(1)
+lon_prev = df.groupby("MMSI")["LON"].shift(1)
 
-# 6. Select required features
-X = df[["speed", "heading_change", "jump_distance", "time_gap"]].values
+df["jump_distance"] = 0.0
+mask = lat_prev.notna() & lon_prev.notna()
+df.loc[mask, "jump_distance"] = haversine_nm_vec(
+    df.loc[mask, "LAT"], df.loc[mask, "LON"],
+    lat_prev.loc[mask], lon_prev.loc[mask]
+)
 
-# 7. Train model with scaler
-print("⚙️ Training Isolation Forest model...")
+df["time_gap"] = (
+    df.groupby("MMSI")["BaseDateTime"]
+    .diff()
+    .dt.total_seconds()
+    .replace([np.inf, -np.inf], np.nan)
+    .fillna(0)
+)
+
+df["speed_change"] = df.groupby("MMSI")["speed"].diff().abs().fillna(0)
+
+safe_gap = df["time_gap"].where(df["time_gap"] >= 30, np.nan)
+df["acceleration"] = (df["speed_change"] / safe_gap).replace([np.inf, -np.inf], 0).fillna(0)
+df["turn_rate"] = (df["heading_change"] / safe_gap).replace([np.inf, -np.inf], 0).fillna(0)
+
+FEATURES = ["speed","heading_change","jump_distance","time_gap","speed_change","acceleration","turn_rate"]
+X = df[FEATURES].replace([np.inf, -np.inf], 0).fillna(0).values
+
+print(f"🧠 Feature matrix: {X.shape}")
+
+# Optional: sample for training speed + better generalization
+MAX_ROWS = 800_000
+if len(X) > MAX_ROWS:
+    idx = np.random.RandomState(42).choice(len(X), size=MAX_ROWS, replace=False)
+    X_train = X[idx]
+    print(f"🎯 Sampling to {MAX_ROWS} rows for training")
+else:
+    X_train = X
+
 pipeline = Pipeline([
     ("scaler", StandardScaler()),
     ("model", IsolationForest(
-        n_estimators=200,
-        contamination=0.15,
-        random_state=42
+        n_estimators=300,
+        contamination=0.01,   # ✅ WAY more realistic start
+        random_state=42,
+        n_jobs=-1
     ))
 ])
 
-pipeline.fit(X)
+print("⚙️ Training Isolation Forest...")
+pipeline.fit(X_train)
 print("✅ Model training complete!")
 
-# 8. Save model
 model_dir = os.path.join(os.path.dirname(__file__), "app", "ml")
 os.makedirs(model_dir, exist_ok=True)
 
 model_path = os.path.join(model_dir, "spoofing_model.pkl")
 joblib.dump(pipeline, model_path)
 print(f"💾 Model saved to: {model_path}")
-
-# 9. Quick test
-test_sample = np.array([[0, 0, 0, 0]])
-prediction = pipeline.predict(test_sample)[0]
-score = pipeline.named_steps["model"].decision_function(
-    pipeline.named_steps["scaler"].transform(test_sample)
-)[0]
-
-print("\n🧩 Model expects exactly these 4 features: ['speed', 'heading_change', 'jump_distance', 'time_gap']")
-print(f"✅ Test sample result: {'Spoofing' if prediction == -1 else 'Normal'} (score: {score:.4f})")
-
-
-

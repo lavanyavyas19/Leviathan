@@ -8,7 +8,11 @@ import VesselLogs from './VesselLogs';
 const Dashboard = ({ onLogout }) => {
   const [activeView, setActiveView] = useState('dashboard');
   const [isPanelOpen, setIsPanelOpen] = useState(true);
-  const [datasetUploaded, setDatasetUploaded] = useState(false); // ✅ New state
+  const [datasetUploaded, setDatasetUploaded] = useState(false);
+  const [jobId, setJobId] = useState(null);
+  const [alerts, setAlerts] = useState([]);
+  const [vesselLogs, setVesselLogs] = useState([]);
+  const [stats, setStats] = useState(null);
   const [highlightedVesselId, setHighlightedVesselId] = useState(null);
   const [vesselLogsFilter, setVesselLogsFilter] = useState(null); // For filtering from chart clicks
 
@@ -70,7 +74,12 @@ const Dashboard = ({ onLogout }) => {
         <Sidebar 
           activeView={activeView} 
           setActiveView={setActiveView} 
-          setDatasetUploaded={setDatasetUploaded}  // ✅ pass setter
+          setDatasetUploaded={setDatasetUploaded}
+          datasetUploaded={datasetUploaded}
+          setJobId={setJobId}
+          setAlerts={setAlerts}
+          setVesselLogs={setVesselLogs}
+          setStats={setStats}
         />
 
         {/* ===== Page Content Area ===== */}
@@ -93,6 +102,9 @@ const Dashboard = ({ onLogout }) => {
                   <div className="w-[350px] transition-all duration-300 flex-shrink-0">
                     <RightPanel 
                       datasetUploaded={datasetUploaded}
+                      jobId={jobId}
+                      alerts={alerts}
+                      stats={stats}
                       onAlertClick={(vesselId) => setHighlightedVesselId(vesselId)}
                     />
                   </div>
@@ -150,6 +162,7 @@ const Dashboard = ({ onLogout }) => {
 
           {activeView === 'vessel-logs' && (
             <VesselLogs 
+              vesselLogs={vesselLogs}
               onVesselSelect={(id) => {
                 setHighlightedVesselId(id);
                 setActiveView('dashboard');
