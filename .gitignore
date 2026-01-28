@@ -27,6 +27,27 @@ data/
 *.csv
 *.json
 
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.venv/
+leviathan-backend/venv/
+
+# ML artifacts
+*.pkl
+*.joblib
+*.pt
+*.onnx
+
+# OS
+.DS_Store
+
 #amplify-do-not-edit-begin
 amplify/\#current-cloud-backend
 amplify/.config/local-*
@@ -48,23 +69,3 @@ amplifytools.xcconfig
 .secret-*
 **.sample
 #amplify-do-not-edit-end
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Virtual environments
-venv/
-.venv/
-leviathan-backend/venv/
-
-# ML artifacts
-*.pkl
-*.joblib
-*.pt
-*.onnx
-
-# OS
-.DS_Store

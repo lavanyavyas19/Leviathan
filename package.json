@@ -17,6 +17,7 @@
     "@mui/material": "^6.0.2",
     "@supabase/supabase-js": "^2.47.12",
     "@types/prop-types": "^15.7.14",
+    "aws-amplify": "^6.16.0",
     "lucide-react": "^0.542.0",
     "papaparse": "^5.5.3",
     "prop-types": "^15.8.1",

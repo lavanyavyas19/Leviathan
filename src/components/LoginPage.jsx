@@ -1,17 +1,31 @@
 import React, { useState } from 'react';
+import { signIn } from 'aws-amplify/auth';
 
 const LoginPage = ({ onLogin }) => {
   const [credentials, setCredentials] = useState({ username: '', password: '' });
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setIsLoading(true);
-    // Simulate authentication delay with radar loading
-    setTimeout(() => {
+    setError('');
+
+    try {
+      await signIn({
+        username: credentials.username,
+        password: credentials.password
+      });
+
+      setTimeout(() => {
+        setIsLoading(false);
+        onLogin();
+      }, 2500);
+    } catch (err) {
+      setError(err.message || 'Authentication failed');
       setIsLoading(false);
-      onLogin();
-    }, 2500);
+      console.error('Auth error:', err);
+    }
   };
 
   const handleChange = (e) => {
@@ -23,7 +37,6 @@ const LoginPage = ({ onLogin }) => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-cyan-900 flex items-center justify-center relative overflow-hidden">
-      {/* Animated background waves */}
       <div className="absolute inset-0 opacity-20">
         <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-r from-transparent via-cyan-500 to-transparent animate-pulse"></div>
         <div className="absolute top-1/4 left-0 w-full h-px bg-gradient-to-r from-transparent via-teal-400 to-transparent animate-pulse delay-1000"></div>
@@ -31,9 +44,7 @@ const LoginPage = ({ onLogin }) => {
         <div className="absolute top-3/4 left-0 w-full h-px bg-gradient-to-r from-transparent via-teal-500 to-transparent animate-pulse delay-3000"></div>
       </div>
 
-      {/* Login form */}
       <div className="bg-slate-800/80 backdrop-blur-lg p-8 rounded-xl border border-cyan-500/30 shadow-2xl shadow-cyan-500/20 w-full max-w-md relative">
-        {/* Logo and title */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-cyan-400 to-teal-600 rounded-full mb-4 shadow-lg shadow-cyan-500/30">
             <svg className="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24">
@@ -46,7 +57,6 @@ const LoginPage = ({ onLogin }) => {
           <p className="text-gray-400 text-sm mt-2">Maritime Surveillance System</p>
         </div>
 
-        {/* Login form */}
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">Username</label>
@@ -74,6 +84,12 @@ const LoginPage = ({ onLogin }) => {
             />
           </div>
 
+          {error && (
+            <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
+              <p className="text-red-400 text-sm">{error}</p>
+            </div>
+          )}
+
           <button
             type="submit"
             disabled={isLoading}
@@ -81,7 +97,6 @@ const LoginPage = ({ onLogin }) => {
           >
             {isLoading ? (
               <div className="flex items-center justify-center">
-                {/* Radar loading animation */}
                 <div className="relative w-8 h-8 mr-3">
                   <div className="absolute inset-0 border-2 border-cyan-400/20 rounded-full"></div>
                   <div className="absolute inset-0 border-2 border-transparent border-t-cyan-400 rounded-full animate-spin"></div>
