@@ -116,12 +116,11 @@ const Dashboard = ({ onLogout }) => {
           {/* === Anomaly Reports View === */}
           {activeView === 'anomaly-reports' && (
             <div className="flex-1 bg-slate-800/40 rounded-xl border border-cyan-500/30 p-4 shadow-lg shadow-cyan-500/10">
-              <BottomChart 
+              <BottomChart
+                jobId={jobId}  // ✅ REQUIRED for real data
                 onChartClick={(data) => {
-                  // Navigate to dashboard view when chart is clicked
                   setActiveView('dashboard');
-                }}
-                onAnomalyFilter={(filter) => {
+                }}  onAnomalyFilter={(filter) => {
                   // Filter vessels by anomaly type and navigate to vessel logs
                   setVesselLogsFilter(filter);
                   setActiveView('vessel-logs');

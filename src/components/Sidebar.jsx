@@ -77,6 +77,12 @@ const Sidebar = ({
               getVesselLogs(currentJobId, { limit: 500 }),
             ]);
 
+            // ✅ NECESSARY: safe timestamp parser (prevents Invalid Date breaking sorting/keying)
+            const safeDate = (x) => {
+              const d = new Date(x);
+              return Number.isFinite(d.getTime()) ? d : new Date();
+            };
+
             const transformedAlerts = (alertsData || []).map((a, idx) => ({
               id: idx + 1,
               type: a.type,
@@ -85,7 +91,7 @@ const Sidebar = ({
               mmsi: a.mmsi,
               lat: a.lat,
               lon: a.lon,
-              timestamp: new Date(a.timestamp || Date.now()),
+              timestamp: safeDate(a.timestamp), // ✅ FIX
               severity: a.severity,
               acknowledged: false,
               description:
@@ -96,9 +102,7 @@ const Sidebar = ({
               cluster_size: a.cluster_size,
             }));
 
-            const uniqueMMSIs = new Set(
-              (logsData || []).map((l) => l.mmsi)
-            );
+            const uniqueMMSIs = new Set((logsData || []).map((l) => l.mmsi));
 
             const anomalyBreakdown = transformedAlerts.reduce((acc, al) => {
               acc[al.type] = (acc[al.type] || 0) + 1;
@@ -114,10 +118,8 @@ const Sidebar = ({
               lastUpdate: new Date(),
               trends: { vessels: "stable", anomalies: "stable" },
               anomalyBreakdown: {
-                spoofing:
-                  reportsData?.spoofing ?? anomalyBreakdown.spoofing ?? 0,
-                loitering:
-                  reportsData?.loitering ?? anomalyBreakdown.loitering ?? 0,
+                spoofing: reportsData?.spoofing ?? anomalyBreakdown.spoofing ?? 0,
+                loitering: reportsData?.loitering ?? anomalyBreakdown.loitering ?? 0,
                 speed: reportsData?.speed ?? 0,
                 deviation: reportsData?.deviation ?? 0,
               },
@@ -148,7 +150,7 @@ const Sidebar = ({
     pollRef.current = setInterval(tick, 1500);
 
     return () => stopPolling();
-  }, [currentJobId, polling]);
+  }, [currentJobId, polling, setDatasetUploaded, setAlerts, setVesselLogs, setStats]);
 
   // ------------------------------------------------
   // UPLOAD

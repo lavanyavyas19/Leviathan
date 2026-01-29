@@ -2,14 +2,19 @@ import React, { useMemo, useState, useEffect } from "react";
 import { TrendingUp, TrendingDown, Minus } from "lucide-react";
 
 /**
- * Build a stable key so ACK/Dismiss works even if list order changes.
- * Prefer timestamp when available.
+ * Stable key so ACK/Dismiss works even if list order changes.
  */
 function alertKey(a) {
-  const ts = a?.timestamp
-    ? new Date(a.timestamp).toISOString()
-    : "no-ts";
+  const d = a?.timestamp instanceof Date ? a.timestamp : new Date(a?.timestamp);
+  const ts = Number.isFinite(d.getTime()) ? d.toISOString() : "no-ts";
   return `${a?.type || "unknown"}|${a?.mmsi || a?.vesselId || "no-mmsi"}|${ts}`;
+}
+
+function normType(t) {
+  const s = String(t || "").toLowerCase();
+  if (s.includes("spoof")) return "spoofing";
+  if (s.includes("loiter")) return "loitering";
+  return "other";
 }
 
 const RightPanel = ({
@@ -18,16 +23,22 @@ const RightPanel = ({
   alerts: propAlerts = [],
   stats: propStats = null,
 }) => {
-  // Store ack/dismiss state keyed by stable alertKey
+  // ACK/Dismiss state
   const [ackMap, setAckMap] = useState({});
   const [dismissMap, setDismissMap] = useState({});
 
-  // If a new dataset is uploaded and alerts reset, you can optionally clear states:
+  // ✅ UI filters
+  const [typeFilter, setTypeFilter] = useState("all"); // all | spoofing | loitering
+  const [sevFilter, setSevFilter] = useState({ high: true, medium: true }); // no low
+  const [searchQuery, setSearchQuery] = useState(""); // ✅ SEARCH BAR BACK
+
   useEffect(() => {
-    // If you want: clear ack/dismiss whenever propAlerts changes completely.
-    // Comment this out if you want ack state to persist.
+    // Optional: reset filters on new dataset upload
+    // setTypeFilter("all");
+    // setSevFilter({ high: true, medium: true });
     // setAckMap({});
     // setDismissMap({});
+    // setSearchQuery("");
   }, [datasetUploaded]);
 
   const stats = propStats || {
@@ -65,50 +76,71 @@ const RightPanel = ({
 
   const handleAcknowledge = (a, e) => {
     e.stopPropagation();
-    const k = alertKey(a);
-    setAckMap((prev) => ({ ...prev, [k]: true }));
+    setAckMap((prev) => ({ ...prev, [alertKey(a)]: true }));
   };
 
   const handleDismiss = (a, e) => {
     e.stopPropagation();
-    const k = alertKey(a);
-    setDismissMap((prev) => ({ ...prev, [k]: true }));
+    setDismissMap((prev) => ({ ...prev, [alertKey(a)]: true }));
   };
 
-  // ✅ Triaging logic: sort + dedupe per vessel/type
+  // ✅ Triaging + Deduping + Filtering + SEARCH
   const triagedAlerts = useMemo(() => {
     const sevWeight = { high: 3, medium: 2, low: 1 };
 
-    // Normalize alert fields (defensive)
     const normalized = (propAlerts || []).map((a, idx) => {
-      const ts = a.timestamp instanceof Date ? a.timestamp : new Date(a.timestamp || Date.now());
+      const ts =
+        a.timestamp instanceof Date ? a.timestamp : new Date(a.timestamp || Date.now());
+      const sev = String(a.severity || "low").toLowerCase();
+      const t = normType(a.type);
+
       return {
         ...a,
-        // ensure these exist
+        _typeNorm: t,
         mmsi: a.mmsi ?? a.vesselId,
         vessel: a.vessel ?? (a.mmsi ? `MMSI-${a.mmsi}` : `Vessel-${idx + 1}`),
-        severity: (a.severity || "low").toLowerCase(),
+        severity: sev,
         timestamp: ts,
       };
     });
 
-    // Deduplicate: keep latest per (type + mmsi)
+    // ✅ Deduplicate latest per (type + mmsi)
     const latestMap = new Map();
     for (const a of normalized) {
-      const key = `${a.type}|${a.mmsi}`;
+      const key = `${a._typeNorm}|${a.mmsi}`;
       const existing = latestMap.get(key);
       if (!existing || a.timestamp.getTime() > existing.timestamp.getTime()) {
         latestMap.set(key, a);
       }
     }
 
-    const deduped = Array.from(latestMap.values());
+    let visible = Array.from(latestMap.values());
 
     // Remove ack/dismissed
-    const visible = deduped.filter((a) => {
-      const k = alertKey(a);
-      return !ackMap[k] && !dismissMap[k];
+    visible = visible.filter((a) => !ackMap[alertKey(a)] && !dismissMap[alertKey(a)]);
+
+    // Type filter
+    if (typeFilter !== "all") {
+      visible = visible.filter((a) => a._typeNorm === typeFilter);
+    }
+
+    // Severity filter (high/medium only)
+    visible = visible.filter((a) => {
+      const s = String(a.severity || "").toLowerCase();
+      if (s === "high") return !!sevFilter.high;
+      if (s === "medium") return !!sevFilter.medium;
+      return false;
     });
+
+    // ✅ Search filter (MMSI or vessel name)
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      visible = visible.filter((a) => {
+        const m = String(a.mmsi ?? a.vesselId ?? "").toLowerCase();
+        const name = String(a.vessel ?? "").toLowerCase();
+        return m.includes(q) || name.includes(q);
+      });
+    }
 
     // Sort by severity then recency
     visible.sort((a, b) => {
@@ -119,7 +151,7 @@ const RightPanel = ({
     });
 
     return visible;
-  }, [propAlerts, ackMap, dismissMap]);
+  }, [propAlerts, ackMap, dismissMap, typeFilter, sevFilter, searchQuery]);
 
   const healthInfo = getHealthSeverity(stats.systemHealth);
 
@@ -129,7 +161,8 @@ const RightPanel = ({
         <div className="text-cyan-400 text-lg mb-2">📡 Awaiting Dataset Upload</div>
         <p className="text-gray-400 text-center max-w-[220px] leading-relaxed">
           Import your AIS dataset to activate <br />
-          <span className="text-cyan-300">Live Alerts</span>, <span className="text-cyan-300">System Status</span>, <br />
+          <span className="text-cyan-300">Live Alerts</span>,{" "}
+          <span className="text-cyan-300">System Status</span>, <br />
           and <span className="text-cyan-300">Anomaly Breakdown</span>.
         </p>
         <div className="w-3 h-3 bg-cyan-400 rounded-full animate-pulse mt-4"></div>
@@ -140,14 +173,100 @@ const RightPanel = ({
   return (
     <div className="w-full bg-slate-900/50 border-l border-cyan-500/20 flex flex-col">
       <div className="p-6 space-y-6 overflow-y-auto">
-
         {/* === Live Alerts === */}
         <div className="bg-slate-800/30 rounded-xl border border-cyan-500/30 p-4">
-          <h3 className="text-lg font-semibold text-cyan-400 mb-4">Live Alerts</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-lg font-semibold text-cyan-400">Live Alerts</h3>
+            <span className="text-xs text-gray-400">
+              Showing {Math.min(5, triagedAlerts.length)} / {triagedAlerts.length}
+            </span>
+          </div>
 
+          {/* Active filter indicator */}
+          <div className="text-xs text-gray-400 mb-3">
+            Filters:
+            <span className="ml-1 capitalize text-cyan-300">{typeFilter}</span>
+            {" · "}
+            {sevFilter.high && <span className="text-red-300 ml-1">High</span>}
+            {sevFilter.medium && <span className="text-yellow-300 ml-1">Medium</span>}
+            {searchQuery.trim() && (
+              <span className="ml-2 text-cyan-300">· Search: "{searchQuery.trim()}"</span>
+            )}
+          </div>
+
+          {/* Filters row */}
+          <div className="mb-4 space-y-2">
+            {/* Type filter */}
+            <div className="flex gap-2">
+              {[
+                { key: "all", label: "All" },
+                { key: "spoofing", label: "Spoofing" },
+                { key: "loitering", label: "Loitering" },
+              ].map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => setTypeFilter(t.key)}
+                  className={`px-3 py-1 rounded-lg text-xs border transition-all ${
+                    typeFilter === t.key
+                      ? "bg-cyan-600/30 text-cyan-300 border-cyan-500/50"
+                      : "bg-slate-700/30 text-gray-300 border-slate-600/40 hover:bg-slate-700/50"
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Severity filter (High / Medium only) */}
+            <div className="flex gap-2">
+              <button
+                onClick={() => setSevFilter((p) => ({ ...p, high: !p.high }))}
+                className={`px-3 py-1 rounded-lg text-xs border transition-all ${
+                  sevFilter.high
+                    ? "bg-red-600/25 text-red-200 border-red-500/50"
+                    : "bg-slate-700/30 text-gray-400 border-slate-600/40"
+                }`}
+              >
+                High
+              </button>
+
+              <button
+                onClick={() => setSevFilter((p) => ({ ...p, medium: !p.medium }))}
+                className={`px-3 py-1 rounded-lg text-xs border transition-all ${
+                  sevFilter.medium
+                    ? "bg-yellow-400/20 text-yellow-200 border-yellow-400/50"
+                    : "bg-slate-700/30 text-gray-400 border-slate-600/40"
+                }`}
+              >
+                Medium
+              </button>
+            </div>
+
+            {/* ✅ Search bar */}
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search MMSI…"
+              className="w-full bg-slate-700/30 text-gray-200 px-3 py-2 rounded-lg border border-slate-600/40 focus:outline-none focus:border-cyan-500/60 text-sm"
+            />
+          </div>
+
+          {/* Alerts list */}
           <div className="space-y-3 max-h-96 overflow-y-auto">
             {triagedAlerts.slice(0, 5).map((alert) => {
-              const sev = (alert.severity || "low").toLowerCase();
+              const sev = String(alert.severity || "low").toLowerCase();
+              const title = alert.vessel || (alert.mmsi ? `MMSI-${alert.mmsi}` : "Unknown Vessel");
+
+              const desc =
+                alert.description ||
+                (alert._typeNorm === "loitering"
+                  ? `Loitering detected (cluster: ${alert.cluster_size ?? "?"})`
+                  : alert._typeNorm === "spoofing"
+                  ? `GPS inconsistency (score: ${
+                      typeof alert.score === "number" ? alert.score.toFixed(3) : "N/A"
+                    })`
+                  : "Anomaly detected");
+
               return (
                 <div
                   key={alertKey(alert)}
@@ -156,16 +275,18 @@ const RightPanel = ({
                 >
                   <div className="flex items-start justify-between mb-2">
                     <div>
-                      <div className="font-semibold text-sm text-white">{alert.vessel}</div>
-                      <div className="text-xs text-gray-300 capitalize">{alert.type} Alert</div>
+                      <div className="font-semibold text-sm text-white">{title}</div>
+                      <div className="text-xs text-gray-300 capitalize">{alert._typeNorm} Alert</div>
                     </div>
 
                     <div className="text-xs text-gray-400 whitespace-nowrap ml-2">
-                      {alert.timestamp.toLocaleTimeString()}
+                      {alert.timestamp instanceof Date && Number.isFinite(alert.timestamp.getTime())
+                        ? alert.timestamp.toLocaleTimeString()
+                        : ""}
                     </div>
                   </div>
 
-                  <div className="text-xs text-gray-300 mb-3">{alert.description}</div>
+                  <div className="text-xs text-gray-300 mb-3">{desc}</div>
 
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
@@ -262,17 +383,10 @@ const RightPanel = ({
               <div className="text-yellow-100 text-xl font-bold">{stats.anomalyBreakdown?.loitering ?? 0}</div>
               <div className="text-xs text-gray-300">Loitering</div>
             </div>
-            <div className="text-center p-3 rounded-lg bg-gradient-to-br from-cyan-400 to-teal-500 border border-cyan-400/50">
-              <div className="text-cyan-100 text-xl font-bold">{stats.anomalyBreakdown?.speed ?? 0}</div>
-              <div className="text-xs text-gray-300">Speed</div>
-            </div>
-            <div className="text-center p-3 rounded-lg bg-gradient-to-br from-indigo-400 to-blue-600 border border-blue-400/50">
-              <div className="text-blue-100 text-xl font-bold">{stats.anomalyBreakdown?.deviation ?? 0}</div>
-              <div className="text-xs text-gray-300">Deviation</div>
-            </div>
+
+            
           </div>
         </div>
-
       </div>
     </div>
   );
