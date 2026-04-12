@@ -1,10 +1,35 @@
-import React, { useState } from 'react';
-import { signIn } from 'aws-amplify/auth';
+import React, { useState, useEffect } from 'react';
+import { signIn, signOut } from 'aws-amplify/auth';
+import { getCognitoErrorMessage, isExistingSessionError } from '../utils/authErrors';
 
-const LoginPage = ({ onLogin }) => {
+const LoginPage = ({ onLogin, hasStaleSession, onStaleSessionDetected }) => {
   const [credentials, setCredentials] = useState({ username: '', password: '' });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [isCleaningSession, setIsCleaningSession] = useState(false);
+
+  // Handle stale session by signing out and showing a user-friendly message
+  useEffect(() => {
+    if (hasStaleSession) {
+      handleClearStaleSession();
+    }
+  }, [hasStaleSession]);
+
+  const handleClearStaleSession = async () => {
+    setIsCleaningSession(true);
+    setError('A previous session was detected. Cleaning up...');
+
+    try {
+      await signOut();
+      setError('');
+      setIsCleaningSession(false);
+      onStaleSessionDetected && onStaleSessionDetected();
+    } catch (err) {
+      console.error('Error clearing stale session:', err);
+      setError('Unable to clear previous session. Please try refreshing the page.');
+      setIsCleaningSession(false);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -12,6 +37,15 @@ const LoginPage = ({ onLogin }) => {
     setError('');
 
     try {
+      // Attempt to sign out any existing session first
+      try {
+        await signOut({ global: true });
+      } catch (signOutErr) {
+        // Ignore sign-out errors (might not have a session)
+        console.debug('Sign-out attempt (expected to fail if no session):', signOutErr);
+      }
+
+      // Now attempt to sign in
       await signIn({
         username: credentials.username,
         password: credentials.password
@@ -22,8 +56,25 @@ const LoginPage = ({ onLogin }) => {
         onLogin();
       }, 2500);
     } catch (err) {
-      setError(err.message || 'Authentication failed');
       setIsLoading(false);
+
+      // Check if this is a stale session error
+      if (isExistingSessionError(err)) {
+        setError('A session is already active. Refreshing...');
+        // Attempt one more time to clean it up
+        try {
+          await signOut({ global: true });
+          setError('Ready to sign in. Please try again.');
+        } catch (cleanupErr) {
+          // If cleanup fails, show friendly message
+          setError('Please refresh the page and try again.');
+        }
+      } else {
+        // Use friendly error message instead of raw Cognito error
+        const friendlyMessage = getCognitoErrorMessage(err);
+        setError(friendlyMessage);
+      }
+
       console.error('Auth error:', err);
     }
   };
@@ -92,10 +143,21 @@ const LoginPage = ({ onLogin }) => {
 
           <button
             type="submit"
-            disabled={isLoading}
+            disabled={isLoading || isCleaningSession}
             className="w-full py-3 px-4 bg-gradient-to-r from-cyan-600 to-teal-600 hover:from-cyan-500 hover:to-teal-500 text-white font-semibold rounded-lg shadow-lg shadow-cyan-500/30 transition-all duration-300 transform hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed relative overflow-hidden"
           >
-            {isLoading ? (
+            {isCleaningSession ? (
+              <div className="flex items-center justify-center">
+                <div className="relative w-8 h-8 mr-3">
+                  <div className="absolute inset-0 border-2 border-cyan-400/20 rounded-full"></div>
+                  <div className="absolute inset-0 border-2 border-transparent border-t-cyan-400 rounded-full animate-spin"></div>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-sm">Clearing Session...</span>
+                  <span className="text-xs opacity-80">Please wait</span>
+                </div>
+              </div>
+            ) : isLoading ? (
               <div className="flex items-center justify-center">
                 <div className="relative w-8 h-8 mr-3">
                   <div className="absolute inset-0 border-2 border-cyan-400/20 rounded-full"></div>

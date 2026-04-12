@@ -3,10 +3,13 @@ from app.routes.ingestion import router as ingestion_router
 from app.routes.loitering import router as loitering_router
 from app.routes.spoofing import router as spoofing_router
 from app.routes.job import router as job_router
-
+from app.routes.metrics import router as metrics_router
+from app.routes.audit import router as audit_router
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+import os
+print("SPOOFING_SCORE_THRESHOLD =", os.getenv("SPOOFING_SCORE_THRESHOLD"))
 
 app = FastAPI(title="Leviathan Backend")
 
@@ -23,9 +26,12 @@ app.add_middleware(
 # Routes
 # --------------------------------------------------
 app.include_router(ingestion_router, prefix="/api")
-app.include_router(job_router, prefix="/api")      # /api/jobs/*
 app.include_router(spoofing_router, prefix="/api")
 app.include_router(loitering_router, prefix="/api")
+app.include_router(job_router, prefix="/api")      # /api/jobs/*
+app.include_router(metrics_router)                 # /api/jobs/{job_id}/metrics  (own prefix="/api/jobs")
+app.include_router(audit_router, prefix="/api")    # /api/audit-logs
+
 
 # --------------------------------------------------
 # Health check

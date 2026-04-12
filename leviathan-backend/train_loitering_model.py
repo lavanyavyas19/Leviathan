@@ -7,7 +7,8 @@ import joblib
 import pyarrow.parquet as pq
 
 # ================= CONFIGURATION =================
-PARQUET_PATH = r"/Users/lavanyavyas/Desktop/Leviathan-main/leviathan-backend/data/ais_15_days_training.parquet"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PARQUET_PATH = os.path.join(BASE_DIR, "data", "ais_15_days_training.parquet")
 
 EPS_NM = 1.0
 MIN_SAMPLES = 5
@@ -16,15 +17,21 @@ LOW_SPEED_THRESHOLD = 2.0
 
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "app", "ml")
 os.makedirs(MODEL_DIR, exist_ok=True)
-MODEL_PATH = os.path.join(MODEL_DIR, "loitering_model.pkl")
+
+MODEL_PATH = os.path.join(MODEL_DIR, "loitering_events_training.pkl")
 
 # ================= SEVERITY =================
-def classify_loitering_severity(cluster_size: int) -> str:
-    if cluster_size > 15:
-        return "high"
-    elif cluster_size >= 5:
+def classify_loitering_severity(cluster_size: int, dwell_time_hr: float) -> str:
+    # LOW: just barely qualifies (near threshold)
+    if dwell_time_hr < 4 or cluster_size < 15:
+        return "low"
+
+    # MEDIUM: decent dwell + decent cluster
+    if dwell_time_hr < 8 or cluster_size < 40:
         return "medium"
-    return "low"
+
+    # HIGH: long dwell + big cluster
+    return "high"
 
 def detect_loitering(df_chunk):
     results = []
@@ -98,7 +105,7 @@ def detect_loitering(df_chunk):
                 "lon": centroid_lon,
                 "timestamp": timestamp,
                 "cluster_size": cluster_size,
-                "severity": classify_loitering_severity(cluster_size),
+                "severity": classify_loitering_severity(cluster_size, float(dwell_time_hours)),
                 "type": "loitering",
                 "avg_speed": avg_speed,
                 "dwell_time_hr": float(dwell_time_hours),

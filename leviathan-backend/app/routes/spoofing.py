@@ -1,128 +1,155 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
-import numpy as np
 import pandas as pd
-import joblib
+from typing import Optional, List
 import os
-from typing import Optional
+
+from app.core.job_store import update_job, get_job
+from app.core.anomaly_detection import detect_spoofing_events
+from app.core.audit_log import append_event                        # ← audit logging
 
 router = APIRouter(prefix="/spoofing", tags=["Spoofing Detection"])
 
-# -----------------------------
-# Load trained spoofing model
-# -----------------------------
-MODEL_PATH = os.path.join("app", "ml", "spoofing_model.pkl")
-model = joblib.load(MODEL_PATH)
-
-# -----------------------------
-# Persistent event storage
-# -----------------------------
-EVENTS_PATH = os.path.join("app", "ml", "spoofing_events.pkl")
-
-if os.path.exists(EVENTS_PATH):
-    spoofing_events = pd.read_pickle(EVENTS_PATH)
-else:
-    spoofing_events = pd.DataFrame(columns=[
-        "speed",
-        "heading_change",
-        "jump_distance",
-        "time_gap",
-        "anomaly_score",
-        "severity"
-    ])
-
-# -----------------------------
-# Input schema (Swagger)
-# -----------------------------
-class SpoofingInput(BaseModel):
-    speed: float
-    heading_change: float
-    jump_distance: float
-    time_gap: float
-    speed_change: float
-    acceleration: float
-    turn_rate: float
+_BASE_DIR  = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+_AUDIT_LOG = os.path.join(_BASE_DIR, "logs", "audit.ndjson")
 
 
 # -----------------------------
-# Severity classification
+# Input schema (AIS points)
 # -----------------------------
-def classify_severity(score: float) -> str:
-    """
-    IsolationForest:
-    more negative = more anomalous
-    """
-    if score < -0.5:
-        return "high"
-    elif score < -0.2:
-        return "medium"
-    else:
-        return "low"
+class AISPoint(BaseModel):
+    mmsi: int
+    lat: float
+    lon: float
+    sog: float
+    cog: float
+    timestamp: Optional[str] = None
+
+
+class SpoofingDetectRequest(BaseModel):
+    points: List[AISPoint]
+
 
 # -----------------------------
-# Detect spoofing (real-time)
+# Detect spoofing from AIS points
 # -----------------------------
 @router.post("/detect")
-def detect_spoofing(data: SpoofingInput):
-    global spoofing_events
+def detect_spoofing(job_id: str, payload: SpoofingDetectRequest):
+    points = payload.points
 
-    # Convert to 1x7 feature array
-    X = np.array([[
-        data.speed,
-        data.heading_change,
-        data.jump_distance,
-        data.time_gap,
-        data.speed_change,
-        data.acceleration,
-        data.turn_rate
-    ]])
+    if not points or len(points) < 2:
+        raise HTTPException(status_code=400, detail="Need at least 2 AIS points")
 
-    # 7-feature validation
-    if X.shape[1] != 7:
-        from fastapi import HTTPException
-        raise HTTPException(
-            status_code=400,
-            detail=f"7 features required, got {X.shape[1]}"
-        )
+    # make sure job exists
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
 
-    # Predict using the IsolationForest pipeline
-    prediction = model.predict(X)[0]
-    anomaly_score = model.decision_function(X)[0]
+    # Convert request -> DataFrame
+    df = pd.DataFrame([p.model_dump() for p in points])
 
-    spoofing_detected = prediction == -1
-    severity = classify_severity(anomaly_score) if spoofing_detected else "none"
+    # Basic sanity
+    required_cols = ["mmsi", "lat", "lon", "sog", "cog"]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Missing required columns: {missing}")
 
-    # Log event if spoofing detected
-    if spoofing_detected:
-        spoofing_events.loc[len(spoofing_events)] = [
-            data.speed,
-            data.heading_change,
-            data.jump_distance,
-            data.time_gap,
-            round(anomaly_score, 4),
-            severity
-        ]
-        spoofing_events.to_pickle(EVENTS_PATH)
+    if df[["lat", "lon", "sog", "cog"]].isna().any().any():
+        raise HTTPException(status_code=400, detail="lat/lon/sog/cog cannot be null")
+
+    # Use your core pipeline (computes features + runs model)
+    events_df = detect_spoofing_events(df)
+
+    # If nothing detected
+    if events_df is None or len(events_df) == 0:
+        return {
+            "spoofing_detected": False,
+            "count": 0,
+            "events": []
+        }
+
+    # Convert detections to alert records for job_store
+    new_alerts = []
+    for _, r in events_df.iterrows():
+        new_alerts.append({
+            "type": "spoofing",
+            "mmsi": int(r.get("mmsi")) if pd.notna(r.get("mmsi")) else None,
+            "lat": float(r.get("lat")) if pd.notna(r.get("lat")) else None,
+            "lon": float(r.get("lon")) if pd.notna(r.get("lon")) else None,
+            "timestamp": str(r.get("timestamp") or ""),
+            "severity": str(r.get("severity") or "low").lower(),
+            "score": float(r.get("score")) if pd.notna(r.get("score")) else None,
+        })
+
+    # Append to existing live_alerts
+    existing_alerts = job.get("live_alerts", []) or []
+    existing_alerts.extend(new_alerts)
+
+    update_job(job_id, {
+        "live_alerts": existing_alerts,
+        "status": "detections_updated"
+    })
+
+    # ── AUDIT: spoofing detection run ──────────────────────────────────────
+    append_event(_AUDIT_LOG, "spoofing_detection_run", {
+        "job_id":           job_id,
+        "alerts_generated": len(new_alerts),
+        "model":            "IsolationForest-n300",
+        "contamination":    0.01,
+    })
+    # ── AUDIT: one entry per high-severity alert ────────────────────────────
+    for a in new_alerts:
+        if str(a.get("severity", "")).lower() == "high":
+            append_event(_AUDIT_LOG, "alert_emitted", {
+                "job_id":   job_id,
+                "type":     "spoofing",
+                "mmsi":     a.get("mmsi"),
+                "lat":      a.get("lat"),
+                "lon":      a.get("lon"),
+                "severity": a.get("severity"),
+                "score":    a.get("score"),
+            })
 
     return {
-        "spoofing_detected": bool(spoofing_detected),
-        "anomaly_score": round(anomaly_score, 4),
-        "severity": severity
+        "spoofing_detected": True,
+        "count": int(len(events_df)),
+        "events": events_df.to_dict(orient="records")
     }
 
+
 # -----------------------------
-# Fetch spoofing events
+# Return spoofing alerts from job_store
 # -----------------------------
 @router.get("/events")
 def get_spoofing_events(
-    severity: Optional[str] = Query(None, description="low | medium | high")
+    job_id: str,
+    severity: Optional[str] = Query(None, description="low | medium | high (or comma-separated)"),
+    mmsi: Optional[int] = Query(None, description="Filter by vessel MMSI"),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
 ):
-    results = spoofing_events.copy()
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    alerts = job.get("live_alerts", []) or []
+
+    # keep only spoofing alerts
+    results = [a for a in alerts if str(a.get("type", "")).lower() == "spoofing"]
 
     if severity:
-        results = results[results["severity"] == severity.lower()]
+        allowed = {s.strip().lower() for s in str(severity).split(",") if s.strip()}
+        results = [a for a in results if str(a.get("severity", "")).lower() in allowed]
+
+    if mmsi is not None:
+        results = [a for a in results if a.get("mmsi") == mmsi]
+
+    total_count = len(results)
+    results = results[offset: offset + limit]
 
     return {
-        "count": len(results),
-        "events": results.to_dict(orient="records")
+        "count": total_count,
+        "offset": offset,
+        "limit": limit,
+        "events": results
     }

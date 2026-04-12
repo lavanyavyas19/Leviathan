@@ -25,8 +25,9 @@ dist-ssr
 
 data/
 *.csv
-*.json
-
+job_store.json
+benchmark_*.json
+.claude/
 
 # Python
 __pycache__/
@@ -38,6 +39,7 @@ __pycache__/
 venv/
 .venv/
 leviathan-backend/venv/
+.env
 
 # ML artifacts
 *.pkl
@@ -68,4 +70,17 @@ amplify-gradle-config.json
 amplifytools.xcconfig
 .secret-*
 **.sample
+.cursor/
+.claude/
+.cursor/
+research_outputs/
+research_outputs_spoofing/
+research_outputs_v2/
+research_outputs_v3/
+research_outputs_v4/
+leviathan-backend/if_score_distribution.png
+leviathan-backend/import_trace.txt
+.env
+amplify/.config/
+amplify/team-provider-info.json
 #amplify-do-not-edit-end

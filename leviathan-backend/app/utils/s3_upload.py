@@ -15,16 +15,16 @@ def get_s3_client():
         region_name=os.getenv('AWS_REGION', 'ap-south-1')  # Mumbai region
     )
 
-async def upload_raw_csv_to_s3(file: UploadFile, bucket_name: str, job_id: str) -> dict:
+async def upload_raw_csv_to_s3(file: UploadFile, raw_bucket: str, job_id: str):
     """
-    Upload raw CSV file to S3 bucket under raw/ prefix
-    Compresses if not already compressed
-    
+    Upload raw CSV file to S3 bucket under raw/ prefix.
+    Compresses if not already compressed.
+
     Args:
         file: FastAPI UploadFile object
-        bucket_name: Target S3 bucket name (must already exist)
+        raw_bucket: Target S3 bucket name (must already exist)
         job_id: Job ID for organizing files
-    
+
     Returns:
         dict with upload status and S3 key
     """
@@ -49,19 +49,19 @@ async def upload_raw_csv_to_s3(file: UploadFile, bucket_name: str, job_id: str) 
         
         # Upload to existing bucket
         s3_client.put_object(
-            Bucket=bucket_name,
-            Key=s3_key,
-            Body=compressed_content,
-            ContentType=content_type
+        Bucket=raw_bucket,
+        Key=s3_key,
+        Body=compressed_content,
+        ContentType=content_type
         )
         
         return {
             "success": True,
             "s3_key": s3_key,
-            "bucket": bucket_name,
+            "bucket": raw_bucket,
             "size_bytes": len(compressed_content),
-            "s3_location": f"s3://{bucket_name}/{s3_key}",
-            "message": f"File uploaded successfully to {bucket_name}/{s3_key}"
+            "s3_location": f"s3://{raw_bucket}/{s3_key}",
+            "message": f"File uploaded successfully to {raw_bucket}/{s3_key}"
         }
         
     except ClientError as e:

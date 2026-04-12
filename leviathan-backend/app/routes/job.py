@@ -1,112 +1,131 @@
+# app/routes/job.py
+#
+# CRASH FIX — CRITICAL:
+#   GET /jobs/{job_id} (status endpoint used by the polling loop) previously
+#   returned the ENTIRE job dict, including live_alerts (thousands of records)
+#   and vessel_logs (one record per unique MMSI vessel = up to 20 000+).
+#   At 50–100 bytes per field × 16 fields × 20 000 vessels this reaches 50+ MB,
+#   which Chrome parses in the main thread → "Aw, Snap!" OOM crash.
+#
+# FIX:
+#   1. GET  /jobs/{id}                → METADATA ONLY (status, progress, summary)
+#                                        Heavy arrays are STRIPPED from this response.
+#   2. GET  /jobs/{id}/live-alerts    → Paginated alerts, hard cap 200
+#   3. GET  /jobs/{id}/anomaly-reports→ Counts object (unchanged)
+#   4. GET  /jobs/{id}/vessel-logs    → Paginated slim logs, hard cap 500
+#   5. GET  /jobs/{id}/map-points     → NEW — sampled geo points, hard cap 500
+#   6. GET  /jobs/{id}/chart-data     → NEW — pre-aggregated hourly time series
+
+from collections import defaultdict
+from datetime import datetime
+from typing import Any
+
+import math
+import numpy as np
+
 from fastapi import APIRouter, HTTPException, Query
 from app.core.job_store import get_job
-import numpy as np
-import math
-from typing import Any
 
 router = APIRouter(prefix="/jobs", tags=["Job Status"])
 
+# ─────────────────────────────────────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
 
-# ---------------------------------------------------
-# JSON SAFETY FIX (NaN/Infinity -> None)
-# ---------------------------------------------------
 def json_safe(obj: Any):
-    """
-    Recursively replace NaN / Infinity (Python + NumPy) with None
-    so FastAPI can JSON encode safely.
-    """
+    """Recursively replace NaN / Infinity with None for safe JSON serialisation."""
     if obj is None:
         return None
-
-    # ✅ convert numpy scalars to native python (np.float64, np.int64, etc.)
     if isinstance(obj, np.generic):
         obj = obj.item()
-
-    # ✅ now this catches both python float and converted numpy float
     if isinstance(obj, float):
         if math.isnan(obj) or math.isinf(obj):
             return None
         return obj
-
     if isinstance(obj, dict):
         return {k: json_safe(v) for k, v in obj.items()}
-
     if isinstance(obj, list):
         return [json_safe(v) for v in obj]
-
     return obj
 
 
-# ---------------------------------------------------
-# Job status (USED BY POLLING)
-# ---------------------------------------------------
+# Keys that carry raw record arrays — must NEVER appear in the status response.
+_HEAVY_KEYS = frozenset({"live_alerts", "vessel_logs"})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. JOB STATUS — METADATA ONLY (used by the polling loop)
+# ─────────────────────────────────────────────────────────────────────────────
+
 @router.get("/{job_id}")
 def get_job_status(job_id: str):
+    """
+    Returns lightweight job metadata only.
+    Heavy arrays (live_alerts, vessel_logs) are stripped so this response
+    never exceeds a few kilobytes regardless of dataset size.
+    """
     job = get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    return json_safe(job)
+
+    # ── Strip every heavy array key ──────────────────────────────────────────
+    status_payload = {k: v for k, v in job.items() if k not in _HEAVY_KEYS}
+
+    return json_safe(status_payload)
 
 
-# ---------------------------------------------------
-# LIVE ALERTS (LIMITED + SLIM PAYLOAD)
-# ---------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. LIVE ALERTS — paginated, severity-filtered, hard cap 200
+# ─────────────────────────────────────────────────────────────────────────────
+
 @router.get("/{job_id}/live-alerts")
 def get_live_alerts(
     job_id: str,
-    severity: str = Query("high"),
-    limit: int = Query(200, ge=1, le=5000),
+    severity: str = Query("high,medium"),
+    limit:    int  = Query(100, ge=1, le=200),   # hard cap 200
+    offset:   int  = Query(0,   ge=0),
 ):
-    job = get_job(job_id) or {}
-    alerts = job.get("live_alerts", []) or []
+    job    = get_job(job_id) or {}
+    alerts = list(job.get("live_alerts", []) or [])
 
-    # STEP 1: Normalize type + spoofing severity
+    # ── Normalise type & severity ────────────────────────────────────────────
     for a in alerts:
         t_raw = str(a.get("type") or "").lower()
-        sev = str(a.get("severity") or "low").lower()
+        sev   = str(a.get("severity") or "low").lower()
 
         if any(k in t_raw for k in ("spoof", "gps", "gnss", "jump", "inconsisten")):
             a["type"] = "spoofing"
-
             score = a.get("score")
             if isinstance(score, (int, float)):
                 s = abs(score)
-                if s >= 0.25:
-                    sev = "high"
-                elif s >= 0.12:
-                    sev = "medium"
-                else:
-                    sev = "low"
-
+                sev = "high" if s >= 0.25 else "medium" if s >= 0.12 else "low"
         elif "loiter" in t_raw:
             a["type"] = "loitering"
-
         a["severity"] = sev
 
-    # STEP 2: Severity filter
-    sev_q = (severity or "high").lower().strip()
+    # ── Severity filter ──────────────────────────────────────────────────────
+    sev_q = (severity or "high,medium").lower().strip()
     if sev_q not in ("all", "any", "*"):
         allowed = {s.strip() for s in sev_q.split(",") if s.strip()}
-        alerts = [a for a in alerts if a.get("severity") in allowed]
+        alerts  = [a for a in alerts if a.get("severity") in allowed]
 
-    # STEP 3: Sort newest first + limit
-    def _ts(a):
-        return str(a.get("timestamp") or "")
+    # ── Sort newest-first, page, cap ─────────────────────────────────────────
+    alerts = sorted(alerts, key=lambda a: str(a.get("timestamp") or ""), reverse=True)
+    total  = len(alerts)
+    alerts = alerts[offset : offset + limit]
 
-    alerts = sorted(alerts, key=_ts, reverse=True)[:limit]
-
-    # STEP 4: Slim payload
+    # ── Slim payload — only fields the frontend actually uses ────────────────
     payload = [
         {
-            "type": a.get("type"),
-            "severity": a.get("severity"),
-            "mmsi": a.get("mmsi"),
-            "lat": a.get("lat"),
-            "lon": a.get("lon"),
-            "timestamp": a.get("timestamp"),
-            "score": a.get("score"),
+            "type":         a.get("type"),
+            "severity":     a.get("severity"),
+            "mmsi":         a.get("mmsi"),
+            "lat":          a.get("lat"),
+            "lon":          a.get("lon"),
+            "timestamp":    a.get("timestamp"),
+            "score":        a.get("score"),
             "cluster_size": a.get("cluster_size"),
-            "dwell_time_hr": a.get("dwell_time_hr"),
+            "dwell_time_hr":a.get("dwell_time_hr"),
         }
         for a in alerts
     ]
@@ -114,81 +133,177 @@ def get_live_alerts(
     return json_safe(payload)
 
 
-# ---------------------------------------------------
-# ANOMALY REPORTS (COUNTS OBJECT)
-# ---------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. ANOMALY REPORTS — counts object, no raw records
+# ─────────────────────────────────────────────────────────────────────────────
+
 @router.get("/{job_id}/anomaly-reports")
 def get_anomaly_reports(job_id: str):
-    job = get_job(job_id) or {}
+    job    = get_job(job_id) or {}
     alerts = job.get("live_alerts", []) or []
+    # Use stored summary if available (avoids iterating large array)
+    summary = job.get("summary") or {}
+    if summary.get("anomaly_breakdown"):
+        return json_safe(summary["anomaly_breakdown"])
 
-    spoofing_vessels = set()
+    spoofing_vessels  = set()
     loitering_vessels = set()
-
     for a in alerts:
         mmsi = a.get("mmsi") or a.get("vesselId")
         if not mmsi:
             continue
-
         t = str(a.get("type") or "").lower()
         if "loiter" in t:
             loitering_vessels.add(mmsi)
-        elif "spoof" in t:
+        elif any(k in t for k in ("spoof", "gps")):
             spoofing_vessels.add(mmsi)
 
-    payload = {
-        "total": len(spoofing_vessels.union(loitering_vessels)),
+    return json_safe({
+        "total":    len(spoofing_vessels | loitering_vessels),
         "spoofing": len(spoofing_vessels),
-        "loitering": len(loitering_vessels),
-        "speed": 0,
-        "deviation": 0,
-    }
-
-    return json_safe(payload)
+        "loitering":len(loitering_vessels),
+        "speed":    0,
+        "deviation":0,
+    })
 
 
-# ---------------------------------------------------
-# VESSEL LOGS (LIMITED + NORMALIZED KEYS)
-# ---------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. VESSEL LOGS — paginated, hard cap 500, slim fields only
+# ─────────────────────────────────────────────────────────────────────────────
+
 @router.get("/{job_id}/vessel-logs")
 def get_vessel_logs(
     job_id: str,
-    limit: int = Query(500, ge=1, le=10000),
+    limit:  int = Query(200, ge=1, le=500),   # hard cap 500
+    offset: int = Query(0,   ge=0),
 ):
-    job = get_job(job_id) or {}
-    logs = job.get("vessel_logs", [])
-    logs = logs[:limit]
+    job  = get_job(job_id) or {}
+    logs = list(job.get("vessel_logs", []) or [])
+    total = len(logs)
+    page  = logs[offset : offset + limit]
 
-    slim_logs = []
-
-    for r in logs:
+    slim = []
+    for r in page:
         vessel_name = (
-            r.get("vessel_name")
-            or r.get("shipname")
-            or r.get("ship_name")
-            or r.get("name")
-            or r.get("vessel")
-            or r.get("callsign")
+            r.get("vessel_name") or r.get("shipname") or r.get("ship_name")
+            or r.get("name") or r.get("vessel") or r.get("callsign")
         )
+        slim.append({
+            "mmsi":           r.get("mmsi"),
+            "lat":            r.get("lat"),
+            "lon":            r.get("lon"),
+            "vessel_name":    vessel_name,
+            "vessel_type":    r.get("vessel_type") or r.get("type"),
+            "sog":            r.get("sog") if r.get("sog") is not None else r.get("speed"),
+            "timestamp":      r.get("timestamp") or r.get("updated"),
+            "spoofing_flag":  bool(r.get("spoofing_flag", False)),
+            "loitering_flag": bool(r.get("loitering_flag", False)),
+            "destination":    r.get("destination"),
+            "draft":          r.get("draft"),
+            "status":         r.get("status", "normal"),
+        })
 
-        vessel_type = r.get("vessel_type") or r.get("type")
-        sog = r.get("sog") if r.get("sog") is not None else r.get("speed")
-        timestamp = r.get("timestamp") or r.get("updated")
+    return json_safe(slim)
 
-        slim_logs.append(
-            {
-                "mmsi": r.get("mmsi"),
-                "lat": r.get("lat"),
-                "lon": r.get("lon"),
-                "vessel_name": vessel_name,
-                "vessel_type": vessel_type,
-                "sog": sog,
-                "timestamp": timestamp,
-                "spoofing_flag": bool(r.get("spoofing_flag", False)),
-                "loitering_flag": bool(r.get("loitering_flag", False)),
-                "destination": r.get("destination"),
-                "draft": r.get("draft"),
-            }
-        )
 
-    return json_safe(slim_logs)
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. MAP POINTS — NEW: sampled geo positions for map rendering, hard cap 500
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/{job_id}/map-points")
+def get_map_points(
+    job_id: str,
+    limit:  int = Query(500, ge=1, le=500),   # hard cap 500
+):
+    """
+    Returns a representative sample of vessel positions for map rendering.
+    Anomalous vessels (spoofing/loitering) are always included; normal vessels
+    are sampled evenly from the remainder to fill up to `limit` points.
+    """
+    job  = get_job(job_id) or {}
+    logs = list(job.get("vessel_logs", []) or [])
+
+    if not logs:
+        return []
+
+    # ── Always include anomalous vessels ─────────────────────────────────────
+    anomalous = [r for r in logs if r.get("spoofing_flag") or r.get("loitering_flag")]
+    normal    = [r for r in logs if not r.get("spoofing_flag") and not r.get("loitering_flag")]
+
+    # Sample normal vessels to fill remaining budget
+    remaining = max(0, limit - len(anomalous))
+    if remaining > 0 and normal:
+        step    = max(1, len(normal) // remaining)
+        sampled = normal[::step][:remaining]
+    else:
+        sampled = []
+
+    selected = anomalous + sampled
+
+    # ── Minimal payload for map rendering ────────────────────────────────────
+    points = [
+        {
+            "mmsi":           r.get("mmsi"),
+            "lat":            r.get("lat"),
+            "lon":            r.get("lon"),
+            "spoofing_flag":  bool(r.get("spoofing_flag", False)),
+            "loitering_flag": bool(r.get("loitering_flag", False)),
+            "vessel_name":    r.get("vessel_name") or r.get("vessel") or f"MMSI-{r.get('mmsi')}",
+            "status":         r.get("status", "normal"),
+        }
+        for r in selected
+        if r.get("lat") is not None and r.get("lon") is not None
+    ]
+
+    return json_safe(points[:limit])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 6. CHART DATA — NEW: pre-aggregated hourly time series for BottomChart
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/{job_id}/chart-data")
+def get_chart_data(job_id: str):
+    """
+    Returns hourly-bucketed anomaly counts for the BottomChart component.
+    The frontend receives O(24-48) data points instead of thousands of raw records.
+    """
+    job    = get_job(job_id) or {}
+    alerts = list(job.get("live_alerts", []) or [])
+
+    buckets: dict = defaultdict(lambda: {"spoofing": 0, "loitering": 0, "other": 0})
+
+    for a in alerts:
+        ts_str = a.get("timestamp")
+        if not ts_str:
+            continue
+        try:
+            # Support ISO strings with or without timezone
+            ts = datetime.fromisoformat(str(ts_str).replace("Z", "+00:00"))
+            bucket_key = ts.strftime("%Y-%m-%dT%H:00:00")
+        except Exception:
+            continue
+
+        a_type = str(a.get("type") or "").lower()
+        if "spoof" in a_type:
+            buckets[bucket_key]["spoofing"]  += 1
+        elif "loiter" in a_type:
+            buckets[bucket_key]["loitering"] += 1
+        else:
+            buckets[bucket_key]["other"]     += 1
+
+    # Return newest 48 hours max (prevents stale large dataset flooding chart)
+    sorted_keys = sorted(buckets.keys())[-48:]
+
+    series = [
+        {
+            "time":      k,
+            "spoofing":  buckets[k]["spoofing"],
+            "loitering": buckets[k]["loitering"],
+            "other":     buckets[k]["other"],
+            "total":     buckets[k]["spoofing"] + buckets[k]["loitering"] + buckets[k]["other"],
+        }
+        for k in sorted_keys
+    ]
+
+    return json_safe(series)
