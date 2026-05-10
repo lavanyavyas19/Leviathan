@@ -53,7 +53,6 @@ const Sidebar = ({
     { id: "vessel-logs",      label: "Vessel Logs" },
     { id: "anomaly-reports",  label: "Anomaly Reports" },
     { id: "audit-logs",       label: "Audit Logs" },
-    { id: "settings",         label: "Settings" },
   ];
 
   // ── Stage → human label ───────────────────────────────────────────────────
@@ -147,16 +146,20 @@ const Sidebar = ({
             // Pass pre-aggregated series to BottomChart (avoids sending raw alert arrays)
             setChartData?.(Array.isArray(chartSeries) ? chartSeries : []);
             setStats({
-              vesselsTracked:   uniqueMMSIs.size,
+              vesselsTracked:    uniqueMMSIs.size,
               anomaliesDetected: transformedAlerts.length,
-              systemHealth:     98.7,
-              lastUpdate:       new Date(),
-              trends:           { vessels: "stable", anomalies: "stable" },
+              systemHealth:      98.7,
+              lastUpdate:        new Date(),
+              trends:            { vessels: "stable", anomalies: "stable" },
               anomalyBreakdown: {
-                spoofing:  reportsData?.spoofing  ?? 0,
-                loitering: reportsData?.loitering ?? 0,
-                speed:     reportsData?.speed     ?? 0,
-                deviation: reportsData?.deviation ?? 0,
+                // Unique vessel counts (true totals, never capped by live_alerts cap)
+                spoofing:         reportsData?.spoofing         ?? 0,
+                loitering:        reportsData?.loitering        ?? 0,
+                speed:            reportsData?.speed            ?? 0,
+                deviation:        reportsData?.deviation        ?? 0,
+                // Raw pre-cap event-row counts — for chart subtitle accuracy
+                spoofingEvents:   reportsData?.spoofing_events  ?? null,
+                loiteringEvents:  reportsData?.loitering_events ?? null,
               },
             });
 

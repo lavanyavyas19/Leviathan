@@ -13,9 +13,12 @@ from __future__ import annotations
 from typing import Annotated, Optional
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 import os
 import json
 import traceback
+
+from app.core.audit_log import append_event as _audit_append
 
 router = APIRouter(tags=["Audit Logs"])
 
@@ -98,4 +101,48 @@ def get_audit_logs(
         raise HTTPException(
             status_code=500,
             detail=f"audit-logs error — {type(exc).__name__}: {exc}",
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ALERT ACTION  (ACK / DISMISS)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AlertActionBody(BaseModel):
+    """Payload sent by the frontend when an operator ACKs or dismisses an alert."""
+    action:    str             # "ALERT_ACK" | "ALERT_DISMISSED"
+    alert_id:  str             # opaque key from alertKey() in RightPanel
+    vessel_id: Optional[int]  = None
+    timestamp: Optional[str]  = None
+    user:      str             = "operator"
+    details:   Optional[str]  = None
+
+
+@router.post("/audit-logs/alert-action")
+def log_alert_action(body: AlertActionBody) -> JSONResponse:
+    """
+    Write a tamper-evident audit entry for an operator ACK or Dismiss action.
+    Returns { ok, seq } on success; never raises (errors are logged + 500).
+    """
+    action = (body.action or "").upper()
+    if action not in ("ALERT_ACK", "ALERT_DISMISSED"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"action must be ALERT_ACK or ALERT_DISMISSED, got: {body.action!r}",
+        )
+    try:
+        os.makedirs(os.path.dirname(AUDIT_LOG), exist_ok=True)
+        record = _audit_append(AUDIT_LOG, action, {
+            "alert_id":  body.alert_id,
+            "vessel_id": body.vessel_id,
+            "timestamp": body.timestamp,
+            "user":      body.user,
+            "details":   body.details,
+        })
+        return JSONResponse(content={"ok": True, "seq": record.get("seq")})
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"alert-action error — {type(exc).__name__}: {exc}",
         )

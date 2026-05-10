@@ -276,44 +276,86 @@ _SPOOFING_EMPTY_COLS = ["mmsi", "lat", "lon", "timestamp", "score", "severity", 
 _FEATURE_COLS = ["speed", "heading_change", "jump_distance",
                  "time_gap", "speed_change", "acceleration", "turn_rate"]
 
+_SPOOFING_THRESHOLD_PATH = os.path.join(MODEL_DIR, "spoofing_threshold.txt")
+
+
+def _load_spoofing_threshold(default: float = 0.5) -> float:
+    """
+    Load the optimised probability threshold saved during training.
+    Falls back to ``default`` (0.5) if the file is missing or unreadable.
+    This threshold applies ONLY to supervised classifiers (predict_proba path).
+    """
+    try:
+        if os.path.exists(_SPOOFING_THRESHOLD_PATH):
+            with open(_SPOOFING_THRESHOLD_PATH) as fh:
+                val = float(fh.read().strip())
+            logger.info(f"[SPOOFING] Loaded probability threshold from file: {val:.6f}")
+            return val
+    except Exception as exc:
+        logger.warning(f"[SPOOFING] Could not read threshold file, using default {default}: {exc}")
+    return default
+
+
+def classify_spoofing_severity_proba_vec(probas: np.ndarray, high_thr: float) -> np.ndarray:
+    """
+    Vectorised severity for supervised probability scores (0–1 range).
+    high_thr  — saved training threshold (anything at/above this is HIGH)
+    medium    — fixed at 0.75 regardless of training threshold
+    """
+    medium_thr = min(0.75, high_thr * 0.80)   # always below high_thr
+    return np.select(
+        [probas >= high_thr, probas >= medium_thr],
+        ["high",             "medium"],
+        default="low",
+    )
+
 
 @profile_fn
 def detect_spoofing_events(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Run Isolation Forest on kinematic features to detect AIS spoofing.
+    Detect AIS spoofing using the trained model in spoofing_model.pkl.
 
-    The caller must pass a DataFrame that is ALREADY sorted by (mmsi, timestamp)
-    and has columns: mmsi, lat, lon, sog, cog, [timestamp].
+    Supports two model types automatically:
+      • Supervised classifier (e.g. HistGradientBoostingClassifier / Pipeline):
+            uses predict_proba()[:, 1] + threshold from spoofing_threshold.txt
+      • Unsupervised (IsolationForest):
+            uses predict() == -1  +  decision_function() for scores
 
-    The input DataFrame is NOT copied — a slim working slice is created instead.
+    The caller must pass a DataFrame sorted by (mmsi, timestamp) with
+    columns: mmsi, lat, lon, sog, cog, [timestamp].
+    Input is NOT copied — a slim working slice is created instead.
     """
     empty = pd.DataFrame(columns=_SPOOFING_EMPTY_COLS)
 
+    # ── 1. Load model ─────────────────────────────────────────────────────────
     if not os.path.exists(SPOOFING_MODEL_PATH):
-        logger.warning("Spoofing model not found, skipping spoofing detection")
+        logger.warning("[SPOOFING] Model file not found at %s — skipping", SPOOFING_MODEL_PATH)
         return empty
 
     try:
         model = jl.load(SPOOFING_MODEL_PATH)
-    except Exception as e:
-        logger.error(f"Failed to load spoofing model: {e}")
+        logger.info(f"[SPOOFING] Model loaded: {type(model).__name__}")
+    except Exception as exc:
+        logger.error(f"[SPOOFING] Failed to load model: {exc}")
         return empty
 
+    # ── 2. Detect model type ─────────────────────────────────────────────────
+    #    Supervised classifiers expose predict_proba(); IsolationForest does not.
+    #    For a sklearn Pipeline, hasattr delegates to the final estimator.
+    is_supervised = hasattr(model, "predict_proba")
+    logger.info(f"[SPOOFING] Model type: {'supervised (predict_proba)' if is_supervised else 'unsupervised (IsolationForest)'}")
+
+    # ── 3. Validate input columns ─────────────────────────────────────────────
     required = {"mmsi", "lat", "lon", "sog", "cog"}
     if not required.issubset(df.columns):
-        logger.warning(f"Missing columns: {required - set(df.columns)}")
+        logger.warning(f"[SPOOFING] Missing input columns: {required - set(df.columns)}")
         return empty
 
-    # ── Build a SLIM working copy (only columns we need) ────────────────────
-    #    This is the key memory saving: instead of copying the full 20-column
-    #    raw DataFrame, we select only the 5–6 needed columns first.
-    ts_cols  = ["timestamp"] if "timestamp" in df.columns else []
+    # ── 4. Build slim working copy ────────────────────────────────────────────
+    ts_cols   = ["timestamp"] if "timestamp" in df.columns else []
     work_cols = ["mmsi", "lat", "lon", "sog", "cog"] + ts_cols
-    work = df[work_cols].copy()          # ~15 MB instead of ~50 MB
+    work = df[work_cols].copy()
 
-    # ── Ensure float types (trust preprocessing — just verify) ───────────────
-    #    If preprocessing ran, these are already float32/int32; the cast here
-    #    is a no-op (returns same array).  Keeps the function safe standalone.
     for col in ("lat", "lon", "sog", "cog"):
         if work[col].dtype not in (np.float32, np.float64):
             work[col] = pd.to_numeric(work[col], errors="coerce")
@@ -323,42 +365,100 @@ def detect_spoofing_events(df: pd.DataFrame) -> pd.DataFrame:
         if not pd.api.types.is_datetime64_any_dtype(work["timestamp"]):
             work["timestamp"] = pd.to_datetime(work["timestamp"], errors="coerce")
 
-    # ── Feature engineering (FULLY VECTORISED — no apply()) ─────────────────
+    # ── 5. Feature engineering ────────────────────────────────────────────────
     with timed_step("spoofing_feature_engineering", df=work, log_shape=False):
         work = compute_kinematic_features(work)
 
-    # ── Build feature matrix ─────────────────────────────────────────────────
+    # ── 6. Build feature matrix ───────────────────────────────────────────────
     X = work[_FEATURE_COLS].to_numpy(dtype=np.float64)
     np.nan_to_num(X, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
 
-    # ── Predict + score ──────────────────────────────────────────────────────
-    with timed_step("isolation_forest_predict", log_shape=False):
-        predictions = model.predict(X)
+    logger.info(f"[SPOOFING DIAG] Rows entering model: {len(X)}")
+    logger.info(f"[SPOOFING DIAG] jump_distance — min={X[:, 2].min():.2f} max={X[:, 2].max():.2f} mean={X[:, 2].mean():.2f} nm")
 
-        if hasattr(model, "decision_function"):
-            scores = model.decision_function(X)
-        elif hasattr(model, "score_samples"):
-            scores = model.score_samples(X)
-        else:
-            scores = np.zeros(len(work), dtype=np.float64)
+    # ── 7. Predict ────────────────────────────────────────────────────────────
+    if is_supervised:
+        # ── Supervised path (HistGradientBoostingClassifier, etc.) ───────────
+        with timed_step("supervised_predict_proba", log_shape=False):
+            try:
+                probas = model.predict_proba(X)[:, 1]
+            except Exception as exc:
+                logger.error(f"[SPOOFING] predict_proba() failed: {exc}")
+                return empty
 
-    spoofing_mask = predictions == -1
-    n_anomalies   = int(spoofing_mask.sum())
-    logger.info(f"[SPOOFING] {n_anomalies:,} anomalies out of {len(work):,} records "
-                f"({n_anomalies / max(len(work), 1) * 100:.2f}%)")
+        saved_threshold = _load_spoofing_threshold(default=0.5)
 
-    if n_anomalies == 0:
-        return empty
+        # ── Diagnostic score logging ─────────────────────────────────────────
+        logger.info(f"[SPOOFING DIAG] Proba scores — min={probas.min():.4f}  max={probas.max():.4f}  mean={probas.mean():.4f}")
+        logger.info(f"[SPOOFING DIAG] Rows >= 0.50 (lenient):          {int((probas >= 0.50).sum())}")
+        logger.info(f"[SPOOFING DIAG] Rows >= 0.75 (medium threshold): {int((probas >= 0.75).sum())}")
+        logger.info(f"[SPOOFING DIAG] Rows >= {saved_threshold:.4f} (saved threshold): {int((probas >= saved_threshold).sum())}")
 
-    # ── Build output  (vectorised severity — no Python per-row apply) ────────
-    out = work.loc[spoofing_mask, ["mmsi", "lat", "lon", "timestamp"]].copy()
-    out["score"]    = scores[spoofing_mask]
-    out["severity"] = classify_spoofing_severity_vec(out["score"].values)
-    out["type"]     = "spoofing"
+        # Use the saved threshold; if it yields nothing, fall back to 0.5 and log a warning
+        spoofing_mask = probas >= saved_threshold
+        n_anomalies   = int(spoofing_mask.sum())
 
+        if n_anomalies == 0 and saved_threshold > 0.5:
+            logger.warning(
+                f"[SPOOFING] Saved threshold {saved_threshold:.4f} produced 0 detections. "
+                f"Falling back to 0.5 for diagnostics. "
+                f"Consider re-training with a lower MIN_SPOOFING_PRECISION or on this data distribution."
+            )
+            spoofing_mask = probas >= 0.5
+            n_anomalies   = int(spoofing_mask.sum())
+
+        logger.info(
+            f"[SPOOFING] {n_anomalies:,} spoofing events detected out of {len(work):,} records "
+            f"({n_anomalies / max(len(work), 1) * 100:.2f}%)"
+        )
+
+        if n_anomalies == 0:
+            return empty
+
+        out = work.loc[spoofing_mask, ["mmsi", "lat", "lon", "timestamp"]].copy()
+        out["score"]    = probas[spoofing_mask]          # probability 0–1
+        out["severity"] = classify_spoofing_severity_proba_vec(
+            out["score"].values, high_thr=saved_threshold
+        )
+
+    else:
+        # ── Unsupervised path (IsolationForest) ───────────────────────────────
+        with timed_step("isolation_forest_predict", log_shape=False):
+            predictions = model.predict(X)
+
+            if hasattr(model, "decision_function"):
+                scores = model.decision_function(X)
+            elif hasattr(model, "score_samples"):
+                scores = model.score_samples(X)
+            else:
+                scores = np.zeros(len(work), dtype=np.float64)
+
+        # ── Diagnostic score logging ─────────────────────────────────────────
+        logger.info(f"[SPOOFING DIAG] Decision scores — min={scores.min():.4f}  max={scores.max():.4f}  mean={scores.mean():.4f}")
+        logger.info(f"[SPOOFING DIAG] Rows < -0.20 (medium threshold): {int((scores < -0.20).sum())}")
+        logger.info(f"[SPOOFING DIAG] Rows < -0.50 (high threshold):   {int((scores < -0.50).sum())}")
+
+        spoofing_mask = predictions == -1
+        n_anomalies   = int(spoofing_mask.sum())
+
+        logger.info(
+            f"[SPOOFING] {n_anomalies:,} anomalies out of {len(work):,} records "
+            f"({n_anomalies / max(len(work), 1) * 100:.2f}%)"
+        )
+
+        if n_anomalies == 0:
+            return empty
+
+        out = work.loc[spoofing_mask, ["mmsi", "lat", "lon", "timestamp"]].copy()
+        out["score"]    = scores[spoofing_mask]
+        out["severity"] = classify_spoofing_severity_vec(out["score"].values)
+
+    # ── 8. Finalise output ────────────────────────────────────────────────────
+    out["type"] = "spoofing"
     if "timestamp" not in out.columns:
         out["timestamp"] = None
 
+    logger.info(f"[SPOOFING] Severity breakdown: {out['severity'].value_counts().to_dict()}")
     return out[_SPOOFING_EMPTY_COLS].reset_index(drop=True)
 
 

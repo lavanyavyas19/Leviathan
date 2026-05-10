@@ -57,14 +57,24 @@ function normaliseEntry(entry) {
   if (rawType.startsWith("spoofing")) type = "spoofing";
   else if (rawType.startsWith("loitering")) type = "loitering";
   else if (rawType === "alert_emitted") {
-    // payload may carry the underlying type
-    type = entry.payload?.type || "alert";
+    // payload carries the underlying detection type (set by _audit_detection_events)
+    type = entry.payload?.event_type || entry.payload?.type || "alert";
+  } else if (rawType === "alert_ack") {
+    type = "alert_ack";
+  } else if (rawType === "alert_dismissed") {
+    type = "alert_dismissed";
   }
 
   const severity =
     entry.payload?.severity ||
     entry.payload?.alert_severity ||
     "low";
+
+  // vessel_id — present on alert_emitted and detection summary entries
+  const vesselId = entry.payload?.vessel_id ?? null;
+
+  // human-readable details string written by the backend helper
+  const details = entry.payload?.details || null;
 
   return {
     hash: entry.current_hash || "",
@@ -74,7 +84,9 @@ function normaliseEntry(entry) {
       severity,
       actor: "system",
       timestamp: entry.timestamp_utc || new Date().toISOString(),
-      payload: entry.payload || {}
+      payload: entry.payload || {},
+      vessel_id: vesselId,
+      details,
     }
   };
 }
@@ -129,14 +141,22 @@ const AuditLogs = ({ auditLogs }) => {
       hash: log.hash,
       prevHash: log.previous_hash,
       timestamp: date.toLocaleString(),
-      payload: log.event.payload
+      payload: log.event.payload,
+      vesselId: log.event.vessel_id ?? null,
+      details: log.event.details ?? null,
     };
   });
 
+  const searchLower = search.toLowerCase();
   const filteredLogs = logs.filter(
     l =>
       (filter === "all" || l.type === filter) &&
-      (l.type.includes(search) || l.actor.includes(search))
+      (!searchLower || (
+        l.type.toLowerCase().includes(searchLower) ||
+        l.actor.toLowerCase().includes(searchLower) ||
+        (l.vesselId != null && String(l.vesselId).includes(searchLower)) ||
+        (l.details   && l.details.toLowerCase().includes(searchLower))
+      ))
   );
 
   const totalPages = Math.ceil(filteredLogs.length / rowsPerPage);
@@ -154,11 +174,12 @@ const AuditLogs = ({ auditLogs }) => {
 
   const exportCSV = () => {
     const csv = [
-      ["Type", "Severity", "Actor", "Hash", "Previous Hash", "Timestamp"],
+      ["Type", "Severity", "Vessel", "Details", "Hash", "Previous Hash", "Timestamp"],
       ...filteredLogs.map(l => [
         l.type,
         l.severity,
-        l.actor,
+        l.vesselId != null ? `MMSI-${l.vesselId}` : "",
+        l.details || "",
         l.hash,
         l.prevHash,
         l.timestamp
@@ -201,6 +222,8 @@ const AuditLogs = ({ auditLogs }) => {
           <option value="all">All Events</option>
           <option value="spoofing">Spoofing</option>
           <option value="loitering">Loitering</option>
+          <option value="alert_ack">Acknowledged Alerts</option>
+          <option value="alert_dismissed">Dismissed Alerts</option>
         </select>
 
         <input
@@ -215,13 +238,14 @@ const AuditLogs = ({ auditLogs }) => {
       <table className="w-full text-sm text-gray-300">
         <thead className="bg-slate-700 text-gray-400">
           <tr>
-            <th className="px-4 py-2">Event</th>
-            <th className="px-4 py-2">Severity</th>
-            <th className="px-4 py-2">Actor</th>
-            <th className="px-4 py-2">Hash</th>
-            <th className="px-4 py-2">Prev Hash</th>
-            <th className="px-4 py-2">Time</th>
-            <th className="px-4 py-2">Status</th>
+            <th className="px-4 py-2 text-left">Event</th>
+            <th className="px-4 py-2 text-left">Severity</th>
+            <th className="px-4 py-2 text-left">Vessel</th>
+            <th className="px-4 py-2 text-left">Details</th>
+            <th className="px-4 py-2 text-left">Hash</th>
+            <th className="px-4 py-2 text-left">Prev Hash</th>
+            <th className="px-4 py-2 text-left">Time</th>
+            <th className="px-4 py-2 text-left">Status</th>
           </tr>
         </thead>
         <tbody>
@@ -241,12 +265,17 @@ const AuditLogs = ({ auditLogs }) => {
                   {log.severity.toUpperCase()}
                 </span>
               </td>
-              <td className="px-4 py-2">system</td>
+              <td className="px-4 py-2 font-mono text-xs text-cyan-300">
+                {log.vesselId != null ? `MMSI-${log.vesselId}` : "—"}
+              </td>
+              <td className="px-4 py-2 text-xs text-gray-300 max-w-[200px] truncate" title={log.details || ""}>
+                {log.details || "—"}
+              </td>
               <td className="px-4 py-2 font-mono text-xs">
                 {log.hash.slice(0, 10)}…
               </td>
               <td className="px-4 py-2 font-mono text-xs">
-                {log.prevHash.slice(0, 10)}…
+                {log.prevHash ? log.prevHash.slice(0, 10) + "…" : "—"}
               </td>
               <td className="px-4 py-2">{log.timestamp}</td>
               <td className="px-4 py-2 text-green-400">

@@ -185,6 +185,70 @@ export async function getLiveAlerts(jobId, options = {}) {
   }
 }
 
+/**
+ * POST /api/audit-logs/alert-action
+ * Fire-and-forget — silently swallows errors so UI is never blocked.
+ * Logs ALERT_ACK or ALERT_DISMISSED to the tamper-evident audit chain.
+ *
+ * @param {{ action: string, alertId: string, vesselId?: number|null,
+ *            timestamp?: Date|string|null, user?: string, details?: string|null }} opts
+ */
+export async function logAlertAction({ action, alertId, vesselId, timestamp, user = "operator", details } = {}) {
+  const { signal, clear } = makeTimeout(10_000);
+  try {
+    const ts =
+      timestamp instanceof Date
+        ? timestamp.toISOString()
+        : timestamp ?? new Date().toISOString();
+
+    await fetch("/api/audit-logs/alert-action", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action,
+        alert_id:  alertId  ?? "",
+        vessel_id: vesselId ?? null,
+        timestamp: ts,
+        user,
+        details:   details  ?? null,
+      }),
+      signal,
+    });
+    // Response is intentionally ignored — best-effort audit write
+  } catch {
+    // Network error or abort — silently ignore so UI never crashes
+  } finally {
+    clear();
+  }
+}
+
+export async function getAuditLogs({ limit = 200, offset = 0, event_type } = {}) {
+  const { signal, clear } = makeTimeout(15_000);
+  try {
+    const params = new URLSearchParams();
+    params.append("limit", limit);
+    params.append("offset", offset);
+    if (event_type) params.append("event_type", event_type);
+
+    const response = await fetch(`/api/audit-logs?${params.toString()}`, { signal });
+
+    if (!response.ok) {
+      const msg = await parseError(response, "Failed to fetch audit logs");
+      const err = new Error(msg);
+      err.status = response.status;
+      throw err;
+    }
+
+    return await safeJson(response, 2 * 1024 * 1024);
+  } catch (err) {
+    if (err.name === "AbortError") {
+      throw new Error("Audit logs request timed out (15 s).");
+    }
+    throw err;
+  } finally {
+    clear();
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ANOMALY REPORTS  (counts object)

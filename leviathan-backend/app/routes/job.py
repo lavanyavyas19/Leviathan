@@ -88,20 +88,33 @@ def get_live_alerts(
     job    = get_job(job_id) or {}
     alerts = list(job.get("live_alerts", []) or [])
 
-    # ── Normalise type & severity ────────────────────────────────────────────
+    # ── Normalise type only — keep stored severity ───────────────────────────
+    #
+    # IMPORTANT: do NOT override severity here from the score field.
+    #
+    # The old code re-classified spoofing severity using:
+    #     sev = "high" if abs(score) >= 0.25 else "medium" if abs(score) >= 0.12 else "low"
+    # This was calibrated for IsolationForest decision_function() scores
+    # (negative range, roughly −0.5 to +0.5).
+    #
+    # The model is now a supervised HistGradientBoostingClassifier whose
+    # score field holds a probability in [0, 1].  Any detected event has
+    # probability >= 0.5 (our minimum threshold), so abs(score) >= 0.25 is
+    # ALWAYS True — every event is forced to HIGH, hiding legitimate MEDIUM
+    # events and making severity meaningless.
+    #
+    # The correct severity was already computed and stored by the detection
+    # pipeline (classify_spoofing_severity_proba_vec / classify_loitering_severity_vec).
+    # Trust it.
     for a in alerts:
         t_raw = str(a.get("type") or "").lower()
         sev   = str(a.get("severity") or "low").lower()
 
         if any(k in t_raw for k in ("spoof", "gps", "gnss", "jump", "inconsisten")):
             a["type"] = "spoofing"
-            score = a.get("score")
-            if isinstance(score, (int, float)):
-                s = abs(score)
-                sev = "high" if s >= 0.25 else "medium" if s >= 0.12 else "low"
         elif "loiter" in t_raw:
             a["type"] = "loitering"
-        a["severity"] = sev
+        a["severity"] = sev   # stored value from anomaly_detection.py — do not override
 
     # ── Severity filter ──────────────────────────────────────────────────────
     sev_q = (severity or "high,medium").lower().strip()
@@ -176,9 +189,20 @@ def get_vessel_logs(
     job_id: str,
     limit:  int = Query(200, ge=1, le=500),   # hard cap 500
     offset: int = Query(0,   ge=0),
+    status: str = Query(None),  # "normal" | "spoofing" | "loitering" | None (all)
 ):
     job  = get_job(job_id) or {}
     logs = list(job.get("vessel_logs", []) or [])
+
+    # ── Optional status filter ────────────────────────────────────────────────
+    # Allows the frontend to request a specific subset (e.g. status=normal) so
+    # it can retrieve normal vessels even when anomalous vessels dominate the
+    # first page.  The stored list is interleaved but a status param is cleaner
+    # for explicit UI-driven filtering.
+    if status:
+        s = status.strip().lower()
+        logs = [l for l in logs if str(l.get("status", "normal")).lower() == s]
+
     total = len(logs)
     page  = logs[offset : offset + limit]
 
@@ -267,8 +291,29 @@ def get_chart_data(job_id: str):
     """
     Returns hourly-bucketed anomaly counts for the BottomChart component.
     The frontend receives O(24-48) data points instead of thousands of raw records.
+
+    DATA SOURCE PRIORITY
+    ────────────────────
+    1. summary["chart_data"]  — pre-computed in _build_payloads() from the FULL
+                                 spoofing_events / loitering_events DataFrames,
+                                 BEFORE live_alerts is capped to 1 000 per type.
+                                 This is the true distribution.
+
+    2. live_alerts (fallback)  — capped subset; used only for jobs that were
+                                 processed before this fix so the endpoint
+                                 never returns an empty response.
     """
-    job    = get_job(job_id) or {}
+    job     = get_job(job_id) or {}
+    summary = job.get("summary") or {}
+
+    # ── 1. Preferred: pre-computed from FULL event arrays ────────────────────
+    precomputed = summary.get("chart_data")
+    if precomputed and isinstance(precomputed, list) and len(precomputed) > 0:
+        return json_safe(precomputed)
+
+    # ── 2. Fallback: aggregate from (capped) live_alerts ─────────────────────
+    #    Covers jobs ingested before this fix.  Counts will be capped at
+    #    1 000 per type but at least the endpoint returns usable data.
     alerts = list(job.get("live_alerts", []) or [])
 
     buckets: dict = defaultdict(lambda: {"spoofing": 0, "loitering": 0, "other": 0})
@@ -278,7 +323,6 @@ def get_chart_data(job_id: str):
         if not ts_str:
             continue
         try:
-            # Support ISO strings with or without timezone
             ts = datetime.fromisoformat(str(ts_str).replace("Z", "+00:00"))
             bucket_key = ts.strftime("%Y-%m-%dT%H:00:00")
         except Exception:
@@ -292,7 +336,6 @@ def get_chart_data(job_id: str):
         else:
             buckets[bucket_key]["other"]     += 1
 
-    # Return newest 48 hours max (prevents stale large dataset flooding chart)
     sorted_keys = sorted(buckets.keys())[-48:]
 
     series = [

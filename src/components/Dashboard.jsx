@@ -13,6 +13,7 @@ import MapView from './MapView';
 import RightPanel from './RightPanel';
 import BottomChart from './BottomChart';
 import VesselLogs from './VesselLogs';
+import AuditLogs from "./AuditLogs";
 
 const Dashboard = ({ onLogout }) => {
   const [activeView,          setActiveView]          = useState('dashboard');
@@ -87,10 +88,24 @@ const Dashboard = ({ onLogout }) => {
           {activeView === 'dashboard' && (
             <div className="flex flex-1 relative gap-6">
               <div className="flex-1 transition-all duration-300">
-                <MapView
-                  highlightedVesselId={highlightedVesselId}
-                  onVesselClick={(vessel) => setHighlightedVesselId(vessel?.id)}
-                />
+                {datasetUploaded ? (
+                  <MapView
+                    highlightedVesselId={highlightedVesselId}
+                    onVesselClick={(vessel) => setHighlightedVesselId(vessel?.id)}
+                  />
+                ) : (
+                  /* Map placeholder — shown before any dataset is loaded,
+                     during upload/processing, and after a failed import.
+                     datasetUploaded is set true only on job status === "DONE". */
+                  <div className="flex flex-1 h-full min-h-[400px] items-center justify-center rounded-xl border border-cyan-500/20 bg-slate-800/20 backdrop-blur-sm">
+                    <div className="text-center space-y-3">
+                      <div className="text-5xl opacity-30">🗺</div>
+                      <p className="text-sm text-gray-500">
+                        Import an AIS dataset to activate the map
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
               {isPanelOpen && (
                 <div className="w-[350px] transition-all duration-300 flex-shrink-0">
@@ -117,6 +132,7 @@ const Dashboard = ({ onLogout }) => {
               <BottomChart
                 jobId={jobId}
                 chartData={chartData}
+                stats={stats}
                 onChartClick={() => setActiveView('dashboard')}
                 onAnomalyFilter={(filter) => {
                   setVesselLogsFilter(filter);
@@ -166,7 +182,7 @@ const Dashboard = ({ onLogout }) => {
 
           {activeView === 'audit-logs' && (
             <div className="flex-1 flex items-center justify-center text-gray-400">
-              Audit Logs view coming soon…
+              <AuditLogs />
             </div>
           )}
 

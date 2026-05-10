@@ -65,6 +65,7 @@ from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
 from app.core.anomaly_detection import detect_loitering_events, detect_spoofing_events
+from app.core.audit_log import append_event as _audit_append
 from app.core.ingestion_engine import run_ingestion_pipeline
 from app.core.job_store import create_job, update_job
 from app.core.profiling import PipelineTimer, timed_step
@@ -77,6 +78,11 @@ router = APIRouter(tags=["Ingestion"])
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
+
+LOGS_DIR = os.path.join(BASE_DIR, "logs")
+os.makedirs(LOGS_DIR, exist_ok=True)
+_AUDIT_LOG = os.path.join(LOGS_DIR, "audit.ndjson")
+_MAX_AUDIT_VESSEL_ENTRIES = 50  # max per-MMSI alert_emitted entries per detection type
 
 _S3_ENABLED = os.getenv("ENABLE_S3_UPLOAD", "false").lower() == "true"
 
@@ -103,6 +109,119 @@ def _to_iso(val) -> str | None:
     if hasattr(val, "isoformat"):
         return val.isoformat()
     return str(val)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AUDIT HELPER  (pure function, safe to run in asyncio.to_thread)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _audit_detection_events(
+    job_id: str,
+    filename: str,
+    detection_type: str,        # "spoofing" | "loitering"
+    events_df: pd.DataFrame,
+) -> None:
+    """
+    Write tamper-evident audit entries for one detection pass:
+
+      1. One  "{detection_type}_detected"  summary entry with aggregate counts.
+      2. Up to _MAX_AUDIT_VESSEL_ENTRIES  "alert_emitted"  entries, one per
+         unique MMSI among HIGH/MEDIUM vessels, ordered worst-severity-first.
+
+    Never raises — failures are logged but do not abort the import pipeline.
+    """
+    if events_df is None or events_df.empty:
+        return
+
+    try:
+        os.makedirs(os.path.dirname(_AUDIT_LOG), exist_ok=True)
+
+        # ── Severity counts ──────────────────────────────────────────────────
+        has_sev = "severity" in events_df.columns
+        sev_col = events_df["severity"] if has_sev else None
+
+        n_high   = int((sev_col == "high").sum())   if has_sev else 0
+        n_medium = int((sev_col == "medium").sum()) if has_sev else 0
+        n_total  = len(events_df)
+        n_unique = int(events_df["mmsi"].nunique()) if "mmsi" in events_df.columns else n_total
+        worst_sev = "high" if n_high else ("medium" if n_medium else "low")
+
+        # ── 1. Summary entry ────────────────────────────────────────────────
+        _audit_append(_AUDIT_LOG, f"{detection_type}_detected", {
+            "job_id":         job_id,
+            "filename":       filename,
+            "total_events":   n_total,
+            "unique_vessels": n_unique,
+            "high_count":     n_high,
+            "medium_count":   n_medium,
+            "severity":       worst_sev,
+            "details": (
+                f"{n_total} {detection_type} events across {n_unique} vessels "
+                f"({n_high} HIGH, {n_medium} MEDIUM)"
+            ),
+        })
+
+        # ── 2. Per-MMSI alert_emitted entries (HIGH/MEDIUM only) ─────────────
+        if not has_sev:
+            return
+
+        hm = events_df[events_df["severity"].isin(["high", "medium"])].copy()
+        if hm.empty:
+            return
+
+        # Sort: worst severity first, then newest timestamp
+        sev_order = {"high": 0, "medium": 1, "low": 2}
+        hm["_sev_order"] = hm["severity"].map(sev_order).fillna(9).astype(int)
+        sort_cols = ["_sev_order"]
+        asc_flags = [True]
+        if "timestamp" in hm.columns:
+            sort_cols.append("timestamp")
+            asc_flags.append(False)
+        hm = hm.sort_values(sort_cols, ascending=asc_flags)
+
+        # One representative row per MMSI, capped
+        representative = hm.drop_duplicates(subset=["mmsi"], keep="first")
+        representative = representative.head(_MAX_AUDIT_VESSEL_ENTRIES)
+
+        for _, row in representative.iterrows():
+            mmsi  = row.get("mmsi")
+            ts    = _to_iso(row.get("timestamp"))
+            sev   = str(row.get("severity", "medium")).lower()
+
+            payload: dict = {
+                "job_id":     job_id,
+                "event_type": detection_type,
+                "vessel_id":  int(mmsi) if mmsi is not None and not pd.isna(mmsi) else None,
+                "timestamp":  ts,
+                "severity":   sev,
+            }
+
+            if detection_type == "spoofing":
+                score = row.get("score")
+                score_f = float(score) if score is not None and not pd.isna(score) else None
+                payload["score"]   = score_f
+                payload["details"] = (
+                    f"GPS spoofing detected (probability: {score_f:.3f})"
+                    if score_f is not None
+                    else "GPS spoofing detected"
+                )
+            else:  # loitering
+                cs    = row.get("cluster_size")
+                dwell = row.get("dwell_time_hr")
+                cs_i  = int(cs)      if cs    is not None and not pd.isna(cs)    else None
+                dw_f  = float(dwell) if dwell is not None and not pd.isna(dwell) else None
+                payload["cluster_size"]  = cs_i
+                payload["dwell_time_hr"] = dw_f
+                payload["details"] = (
+                    f"Loitering detected: {cs_i} vessel cluster, {dw_f:.1f}h dwell"
+                    if cs_i is not None and dw_f is not None
+                    else "Loitering detected"
+                )
+
+            _audit_append(_AUDIT_LOG, "alert_emitted", payload)
+
+    except Exception as exc:
+        logger.warning(f"[AUDIT] {job_id} — audit write failed (non-fatal): {exc}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -168,9 +287,11 @@ async def _process_file(job_id: str, file_content: bytes, safe_name: str):
       9. (Optional) Upload parquet to S3
      10. Mark DONE
     """
-    temp_path    = None
-    parquet_path = None
-    timer        = PipelineTimer(job_id=job_id)
+    temp_path      = None
+    parquet_path   = None
+    raw_s3_path    = None
+    clean_s3_path  = None
+    timer          = PipelineTimer(job_id=job_id)
 
     try:
         # ── 1. Optional S3 raw upload ─────────────────────────────────────────
@@ -227,6 +348,9 @@ async def _process_file(job_id: str, file_content: bytes, safe_name: str):
         timer.stop("detect_spoofing")
         logger.info(f"[IMPORT] {job_id} spoofing: {len(spoofing_events)} events")
 
+        # Write tamper-evident audit entries for spoofing detections (non-blocking)
+        await asyncio.to_thread(_audit_detection_events, job_id, safe_name, "spoofing", spoofing_events)
+
         await asyncio.to_thread(update_job, job_id, {"progress": 65})
 
         # ── 5. Loitering detection ────────────────────────────────────────────
@@ -234,6 +358,9 @@ async def _process_file(job_id: str, file_content: bytes, safe_name: str):
         loitering_events = await asyncio.to_thread(detect_loitering_events, df_clean)
         timer.stop("detect_loitering")
         logger.info(f"[IMPORT] {job_id} loitering: {len(loitering_events)} events")
+
+        # Write tamper-evident audit entries for loitering detections (non-blocking)
+        await asyncio.to_thread(_audit_detection_events, job_id, safe_name, "loitering", loitering_events)
 
         await asyncio.to_thread(update_job, job_id, {"status": "BUILDING", "progress": 80})
 
@@ -258,14 +385,61 @@ async def _process_file(job_id: str, file_content: bytes, safe_name: str):
 
         anomalous_logs = [v for v in vessel_logs if v.get("spoofing_flag") or v.get("loitering_flag")]
         normal_logs    = [v for v in vessel_logs if not v.get("spoofing_flag") and not v.get("loitering_flag")]
-        budget         = max(0, MAX_VESSEL_LOGS - len(anomalous_logs))
-        vessel_logs_capped = (anomalous_logs + normal_logs[:budget])[:MAX_VESSEL_LOGS]
-        live_alerts_capped = live_alerts[:MAX_LIVE_ALERTS]
+
+        # ── Fair interleaved vessel_logs cap ───────────────────────────────────
+        #
+        # ROOT CAUSE: old code placed ALL anomalous logs first:
+        #   vessel_logs_capped = anomalous_logs + normal_logs[:budget]
+        # GET /vessel-logs returns logs[offset:offset+limit].  The Sidebar calls
+        # getVesselLogs(limit=200, offset=0) exactly once.  If there are ≥ 200
+        # anomalous vessels, the response is 100 % anomalous — no normal vessel
+        # ever reaches the frontend.  VesselLogs "Normal" filter → 0 results.
+        #
+        # FIX: guarantee each type gets half the budget, then interleave
+        # (a₀, n₀, a₁, n₁, …) so every 200-record page contains both types.
+        _MAX_A   = MAX_VESSEL_LOGS // 2   # 1 000 anomalous slots
+        _MAX_N   = MAX_VESSEL_LOGS // 2   # 1 000 normal slots
+        a_capped = anomalous_logs[:_MAX_A]
+        n_capped = normal_logs[:_MAX_N]
+
+        interleaved: list = []
+        ai = ni = 0
+        while len(interleaved) < MAX_VESSEL_LOGS and (ai < len(a_capped) or ni < len(n_capped)):
+            if ai < len(a_capped):
+                interleaved.append(a_capped[ai]); ai += 1
+            if ni < len(n_capped) and len(interleaved) < MAX_VESSEL_LOGS:
+                interleaved.append(n_capped[ni]); ni += 1
+
+        vessel_logs_capped = interleaved
+
+        # ── Fair per-type cap so loitering alerts are never starved by spoofing ─
+        #
+        # ROOT CAUSE: pd.concat(sp_frames + lt_frames) puts spoofing first.
+        # A flat live_alerts[:2000] cut silently discards ALL loitering rows when
+        # spoofing alone exceeds 2000 entries (common with 0.5 fallback threshold
+        # on large real-AIS datasets).
+        #
+        # FIX: Reserve half the budget for each type, then fill any leftover with
+        # the other type so the total never exceeds MAX_LIVE_ALERTS.
+        _MAX_PER_TYPE    = MAX_LIVE_ALERTS // 2   # 1 000 slots per type
+        spoofing_alerts  = [a for a in live_alerts if a.get("type") == "spoofing"]
+        loitering_alerts = [a for a in live_alerts if a.get("type") == "loitering"]
+        other_alerts     = [a for a in live_alerts if a.get("type") not in ("spoofing", "loitering")]
+
+        sp_capped  = spoofing_alerts[:_MAX_PER_TYPE]
+        lt_capped  = loitering_alerts[:_MAX_PER_TYPE]
+        # Use any remaining budget for the other type or misc alerts
+        remaining  = MAX_LIVE_ALERTS - len(sp_capped) - len(lt_capped)
+        ot_capped  = other_alerts[:remaining] if remaining > 0 else []
+        live_alerts_capped = sp_capped + lt_capped + ot_capped
 
         logger.info(
             f"[IMPORT] {job_id} capping: "
-            f"vessel_logs {len(vessel_logs)} → {len(vessel_logs_capped)}, "
-            f"live_alerts {len(live_alerts)} → {len(live_alerts_capped)}"
+            f"vessel_logs {len(vessel_logs)} → {len(vessel_logs_capped)} "
+            f"(anomalous {len(a_capped)}, normal {len(n_capped)}, interleaved), "
+            f"live_alerts {len(live_alerts)} → {len(live_alerts_capped)} "
+            f"(spoofing {len(spoofing_alerts)}→{len(sp_capped)}, "
+            f"loitering {len(loitering_alerts)}→{len(lt_capped)})"
         )
 
         # update_job() is non-blocking now (strips heavy keys before disk write)
@@ -279,18 +453,34 @@ async def _process_file(job_id: str, file_content: bytes, safe_name: str):
         timer.stop("cap_and_store")
 
         # ── 9. Optional S3 Parquet upload ─────────────────────────────────────
-        clean_s3_path = None
-        if _s3_available() and parquet_path:
-            timer.start("s3_clean_upload")
+        raw_s3_path = None
+        if _s3_available():
+            timer.start("s3_raw_upload")
             try:
-                from app.utils.s3_upload import upload_clean_csv_to_s3
-                raw_bucket    = os.getenv("AWS_S3_RAW_BUCKET", "")
-                result        = await upload_clean_csv_to_s3(parquet_path, raw_bucket, job_id, safe_name)
-                clean_s3_path = result.get("s3_location") if result.get("success") else None
+                from app.utils.s3_upload import upload_raw_csv_to_s3
+
+                class _FakeUpload:
+                    filename = safe_name
+                    async def seek(self, n): pass
+                    async def read(self):    return file_content
+
+                raw_bucket  = os.getenv("AWS_S3_RAW_BUCKET", "")
+                logger.info(f"[IMPORT] {job_id} starting raw S3 upload to bucket={raw_bucket}")
+
+                result      = await upload_raw_csv_to_s3(_FakeUpload(), raw_bucket, job_id)
+                raw_s3_path = result.get("s3_location") if result.get("success") else None
+
+                if result.get("success"):
+                    logger.info(f"[IMPORT] {job_id} raw file uploaded to S3: {raw_s3_path}")
+                else:
+                    logger.warning(f"[IMPORT] {job_id} raw S3 upload failed: {result}")
+                    
             except Exception as e:
-                logger.warning(f"[IMPORT] {job_id} S3 clean upload failed (non-fatal): {e}")
+                logger.warning(f"[IMPORT] {job_id} S3 raw upload failed (non-fatal): {e}")
             finally:
-                timer.stop("s3_clean_upload")
+                timer.stop("s3_raw_upload")
+        else:
+            logger.info(f"[IMPORT] {job_id} S3 upload skipped: ENABLE_S3_UPLOAD disabled or AWS env missing")
 
         # ── 10. Mark DONE ──────────────────────────────────────────────────────
         timer.report()
@@ -392,6 +582,51 @@ def _build_payloads(
     else:
         live_alerts = []
 
+    # ── chart_data — hourly aggregation from FULL (uncapped) event arrays ────
+    #
+    # This runs BEFORE any live_alerts cap so the chart always reflects the
+    # true distribution, not the 1 000-per-type UI subset.
+    #
+    # We aggregate directly from the spoofing_events / loitering_events
+    # DataFrames (not the dict list) using vectorised value_counts() so it
+    # scales to hundreds of thousands of rows without a Python for-loop.
+    #
+    # Result is stored in summary["chart_data"] (≤ 48 small dicts, ~2 KB) so
+    # it survives disk persistence and get_chart_data() can serve it directly.
+    _chart_buckets: dict = {}
+
+    for _ev_df, _ev_type in (
+        (spoofing_events,  "spoofing"),
+        (loitering_events, "loitering"),
+    ):
+        if _ev_df.empty or "timestamp" not in _ev_df.columns:
+            continue
+        _hours = (
+            pd.to_datetime(_ev_df["timestamp"], errors="coerce")
+            .dt.strftime("%Y-%m-%dT%H:00:00")
+        )
+        for _hour, _count in _hours.dropna().value_counts().items():
+            b = _chart_buckets.setdefault(
+                _hour, {"spoofing": 0, "loitering": 0, "other": 0}
+            )
+            b[_ev_type] += int(_count)
+
+    _sorted_chart_keys = sorted(_chart_buckets.keys())[-48:]
+    chart_data = [
+        {
+            "time":      k,
+            "spoofing":  _chart_buckets[k]["spoofing"],
+            "loitering": _chart_buckets[k]["loitering"],
+            "other":     _chart_buckets[k]["other"],
+            "total":     (
+                _chart_buckets[k]["spoofing"]
+                + _chart_buckets[k]["loitering"]
+                + _chart_buckets[k]["other"]
+            ),
+        }
+        for k in _sorted_chart_keys
+    ]
+
     # ── anomaly MMSI sets (from DataFrames, not dict lists) ──────────────────
     sp_mmsi_set = set(spoofing_events["mmsi"].dropna().astype(int).unique()) \
                   if not spoofing_events.empty else set()
@@ -454,26 +689,39 @@ def _build_payloads(
         })
 
     # ── anomaly_reports ───────────────────────────────────────────────────────
+    # NOTE: spoofing / loitering are UNIQUE VESSEL counts (from MMSI sets).
+    #       spoofing_events / loitering_events are RAW EVENT-ROW counts (one
+    #       row per detection, before live_alerts capping).  Both are stored so
+    #       the chart can show "X of Y events shown (capped to 1 000 per type)".
     anomaly_reports = {
-        "total":    len(sp_mmsi_set | lt_mmsi_set),
-        "spoofing": len(sp_mmsi_set),
-        "loitering":len(lt_mmsi_set),
-        "speed":    0,
-        "deviation":0,
+        "total":             len(sp_mmsi_set | lt_mmsi_set),
+        "spoofing":          len(sp_mmsi_set),
+        "loitering":         len(lt_mmsi_set),
+        "speed":             0,
+        "deviation":         0,
+        # True pre-cap event counts — exposed for chart subtitle
+        "spoofing_events":   len(spoofing_events) if not spoofing_events.empty else 0,
+        "loitering_events":  len(loitering_events) if not loitering_events.empty else 0,
     }
 
     # ── summary ───────────────────────────────────────────────────────────────
     summary = {
-        "live_alerts_total":  len(live_alerts),
+        "live_alerts_total":  len(live_alerts),  # pre-cap true total
         "vessel_logs_total":  len(vessel_logs),
         "unique_vessels":     len(last_rows),
         "anomaly_breakdown":  {
-            "total":    anomaly_reports["total"],
-            "spoofing": anomaly_reports["spoofing"],
-            "loitering":anomaly_reports["loitering"],
-            "speed":    0,
-            "deviation":0,
+            "total":            anomaly_reports["total"],
+            "spoofing":         anomaly_reports["spoofing"],
+            "loitering":        anomaly_reports["loitering"],
+            "speed":            0,
+            "deviation":        0,
+            "spoofing_events":  anomaly_reports["spoofing_events"],
+            "loitering_events": anomaly_reports["loitering_events"],
         },
+        # Pre-aggregated hourly chart series computed from the FULL event arrays
+        # (before live_alerts is capped).  Stored here so get_chart_data() can
+        # serve the TRUE distribution without re-aggregating capped data.
+        "chart_data":         chart_data,
     }
 
     return live_alerts, vessel_logs, anomaly_reports, summary

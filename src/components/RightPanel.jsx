@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useEffect } from "react";
 import { TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { logAlertAction } from "../utils/api";
 
 /**
  * Stable key so ACK/Dismiss works even if list order changes.
@@ -77,11 +78,27 @@ const RightPanel = ({
   const handleAcknowledge = (a, e) => {
     e.stopPropagation();
     setAckMap((prev) => ({ ...prev, [alertKey(a)]: true }));
+    // Fire-and-forget: write to tamper-evident audit log
+    logAlertAction({
+      action:    "ALERT_ACK",
+      alertId:   alertKey(a),
+      vesselId:  a.mmsi ?? a.vesselId ?? null,
+      timestamp: a.timestamp,
+      details:   `Alert acknowledged: ${a._typeNorm ?? a.type ?? "unknown"} on ${a.vessel || (a.mmsi ? `MMSI-${a.mmsi}` : "Unknown Vessel")}`,
+    });
   };
 
   const handleDismiss = (a, e) => {
     e.stopPropagation();
     setDismissMap((prev) => ({ ...prev, [alertKey(a)]: true }));
+    // Fire-and-forget: write to tamper-evident audit log
+    logAlertAction({
+      action:    "ALERT_DISMISSED",
+      alertId:   alertKey(a),
+      vesselId:  a.mmsi ?? a.vesselId ?? null,
+      timestamp: a.timestamp,
+      details:   `Alert dismissed: ${a._typeNorm ?? a.type ?? "unknown"} on ${a.vessel || (a.mmsi ? `MMSI-${a.mmsi}` : "Unknown Vessel")}`,
+    });
   };
 
   // ✅ Triaging + Deduping + Filtering + SEARCH

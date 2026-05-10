@@ -88,8 +88,9 @@ function bucketAlerts(alerts, buckets, minT, maxT, hourly) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const BottomChart = ({
-  jobId,                  // kept for prop-passing / future direct-fetch
+  jobId,                     // kept for prop-passing / future direct-fetch
   chartData: propChartData,  // pre-aggregated series from GET /chart-data (≤ 48 items)
+  stats,                     // from Dashboard — contains anomalyBreakdown.spoofingEvents etc.
   onChartClick,
   onAnomalyFilter,
   onVesselHighlight,
@@ -263,8 +264,18 @@ const BottomChart = ({
     }));
   }, [chartData, normalized, vesselCount]);
 
+  // True pre-cap event totals from anomaly_reports (null when backend is pre-fix)
+  const trueSpoofingEvents  = stats?.anomalyBreakdown?.spoofingEvents  ?? null;
+  const trueLoiteringEvents = stats?.anomalyBreakdown?.loiteringEvents ?? null;
+  const hasTrueTotals = trueSpoofingEvents != null && trueLoiteringEvents != null;
+
   const aggregationSubtitle = hasRealData
-    ? `${backendChartData.reduce((s, d) => s + d.total, 0)} detected events — real data (hourly aggregation)`
+    ? hasTrueTotals
+      // Show "X of Y shown" so the user knows the chart is capped
+      ? `Spoofing: ${summaryTotals.spoofing.toLocaleString()} of ${trueSpoofingEvents.toLocaleString()} events shown` +
+        ` · Loitering: ${summaryTotals.loitering.toLocaleString()} of ${trueLoiteringEvents.toLocaleString()} events shown` +
+        ` (max 1 000 per type, hourly aggregation)`
+      : `${summaryTotals.total.toLocaleString()} sampled events (max 1 000 per type) — real data`
     : timeFilter === '24h'
     ? 'Hourly aggregation (sample data — upload a dataset)'
     : 'Daily aggregation (sample data — upload a dataset)';
